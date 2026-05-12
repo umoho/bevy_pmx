@@ -1,6 +1,8 @@
+use bevy::{asset::Asset, reflect::TypePath};
+
 use crate::format::PmxDocument;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Asset, TypePath)]
 pub struct Pmx {
     pub document: PmxDocument,
     pub primitives: Vec<PmxPrimitive>,

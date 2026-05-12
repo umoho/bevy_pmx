@@ -1,4 +1,8 @@
-#[derive(Debug, Clone)]
+use bevy::prelude::Resource;
+
+use crate::resolver::PmxResolverSettings;
+
+#[derive(Debug, Clone, Resource)]
 pub struct PmxLoaderSettings {
     pub load_textures: bool,
     pub load_meshes: bool,
@@ -6,6 +10,7 @@ pub struct PmxLoaderSettings {
     pub load_morphs: bool,
     pub load_physics: bool,
     pub keep_raw_document: bool,
+    pub resolver: PmxResolverSettings,
 }
 
 impl Default for PmxLoaderSettings {
@@ -17,6 +22,7 @@ impl Default for PmxLoaderSettings {
             load_morphs: true,
             load_physics: true,
             keep_raw_document: true,
+            resolver: PmxResolverSettings::default(),
         }
     }
 }
@@ -26,10 +32,22 @@ pub struct PmxLoader {
     pub settings: PmxLoaderSettings,
 }
 
+impl PmxLoader {
+    pub fn new(settings: PmxLoaderSettings) -> Self {
+        Self { settings }
+    }
+}
+
 impl Default for PmxLoader {
     fn default() -> Self {
         Self {
             settings: PmxLoaderSettings::default(),
         }
+    }
+}
+
+impl From<PmxLoaderSettings> for PmxLoader {
+    fn from(settings: PmxLoaderSettings) -> Self {
+        Self::new(settings)
     }
 }

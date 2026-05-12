@@ -1,4 +1,9 @@
-use crate::loader::PmxLoaderSettings;
+use bevy::{
+    asset::AssetApp,
+    prelude::{App, Plugin},
+};
+
+use crate::{asset::Pmx, loader::PmxLoaderSettings};
 
 #[derive(Debug, Clone)]
 pub struct PmxPlugin {
@@ -20,5 +25,12 @@ impl PmxPlugin {
 impl Default for PmxPlugin {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Plugin for PmxPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_asset::<Pmx>();
+        app.insert_resource(self.settings.clone());
     }
 }
