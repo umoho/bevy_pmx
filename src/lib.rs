@@ -23,7 +23,8 @@ pub mod source;
 
 pub use asset::{Pmx, PmxPrimitive};
 pub use error::{PmxError, PmxResult};
-pub use format::{PmxDocument, PmxHeader};
+pub use format::{PmxDocument, PmxHeader, parse_pmx};
+pub use import::{PmxImportContext, PmxImportResult, import_pmx, resolve_textures};
 pub use labels::PmxAssetLabel;
 pub use loader::{PmxLoader, PmxLoaderSettings};
 pub use plugin::PmxPlugin;
@@ -33,6 +34,7 @@ pub use source::{PmxFolderSource, PmxSource};
 pub mod prelude {
     pub use crate::asset::{Pmx, PmxPrimitive};
     pub use crate::error::{PmxError, PmxResult};
+    pub use crate::format::parse_pmx;
     pub use crate::format::{
         PmxBone, PmxBoneAxes, PmxBoneFlags, PmxBoneInheritance, PmxBoneTail, PmxDisplayFrame,
         PmxDisplayFrameItem, PmxDocument, PmxHeader, PmxIk, PmxIkLink, PmxJoint, PmxJointKind,
@@ -40,6 +42,7 @@ pub mod prelude {
         PmxMorphKind, PmxMorphOffset, PmxRigidBody, PmxRigidBodyMode, PmxRigidBodyShape,
         PmxSoftBody, PmxSoftBodyShape, PmxTextEncoding, PmxTexture, PmxVertex, PmxVertexWeight,
     };
+    pub use crate::import::{PmxImportContext, PmxImportResult, import_pmx, resolve_textures};
     pub use crate::labels::PmxAssetLabel;
     pub use crate::loader::{PmxLoader, PmxLoaderSettings};
     pub use crate::plugin::PmxPlugin;

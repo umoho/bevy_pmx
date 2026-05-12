@@ -13,13 +13,39 @@ impl Default for PmxTextEncoding {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PmxBoneFlags(pub u16);
 
+impl PmxBoneFlags {
+    pub const TAIL_BONE: u16 = 0x0001;
+    pub const ROTATABLE: u16 = 0x0002;
+    pub const TRANSLATABLE: u16 = 0x0004;
+    pub const VISIBLE: u16 = 0x0008;
+    pub const ENABLED: u16 = 0x0010;
+    pub const IK: u16 = 0x0020;
+    pub const INHERIT_ROTATION: u16 = 0x0100;
+    pub const INHERIT_TRANSLATION: u16 = 0x0200;
+    pub const FIXED_AXIS: u16 = 0x0400;
+    pub const LOCAL_AXES: u16 = 0x0800;
+    pub const AFTER_PHYSICS: u16 = 0x1000;
+    pub const EXTERNAL_PARENT_DEFORM: u16 = 0x2000;
+
+    pub fn contains(self, flag: u16) -> bool {
+        self.0 & flag != 0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PmxMaterialFlags(pub u8);
 
-#[derive(Debug, Clone)]
+impl PmxMaterialFlags {
+    pub fn contains(self, flag: u8) -> bool {
+        self.0 & flag != 0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct PmxHeader {
     pub magic: [u8; 4],
     pub version: f32,
+    pub header_size: u8,
     pub encoding: PmxTextEncoding,
     pub additional_uv_count: u8,
     pub vertex_index_size: u8,
@@ -39,6 +65,7 @@ impl Default for PmxHeader {
         Self {
             magic: *b"PMX ",
             version: 2.0,
+            header_size: 8,
             encoding: PmxTextEncoding::default(),
             additional_uv_count: 0,
             vertex_index_size: 4,
@@ -55,7 +82,7 @@ impl Default for PmxHeader {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PmxDocument {
     pub header: PmxHeader,
     pub vertices: Vec<PmxVertex>,
@@ -88,7 +115,7 @@ impl Default for PmxDocument {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PmxVertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
@@ -98,7 +125,7 @@ pub struct PmxVertex {
     pub edge_scale: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PmxVertexWeight {
     Bdef1 {
         bone: i32,
@@ -126,12 +153,12 @@ pub enum PmxVertexWeight {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PmxTexture {
     pub path: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PmxMaterial {
     pub name: String,
     pub name_english: String,
@@ -159,7 +186,7 @@ pub enum PmxSphereMode {
     SubTexture,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PmxBone {
     pub name: String,
     pub name_english: String,
@@ -175,13 +202,13 @@ pub struct PmxBone {
     pub ik: Option<PmxIk>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PmxBoneTail {
     BoneIndex(i32),
     Offset([f32; 3]),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PmxBoneInheritance {
     pub parent_bone: i32,
     pub influence: f32,
@@ -189,13 +216,13 @@ pub struct PmxBoneInheritance {
     pub affects_rotation: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PmxBoneAxes {
     pub local_x: [f32; 3],
     pub local_z: [f32; 3],
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PmxIk {
     pub target_bone: i32,
     pub iterations: u32,
@@ -203,13 +230,13 @@ pub struct PmxIk {
     pub links: Vec<PmxIkLink>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PmxIkLink {
     pub bone_index: i32,
     pub angle_limits: Option<([f32; 3], [f32; 3])>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PmxMorph {
     pub name: String,
     pub name_english: String,
@@ -239,7 +266,7 @@ pub enum PmxMorphKind {
     Impulse,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PmxMorphOffset {
     Group {
         morph_index: i32,
@@ -281,7 +308,7 @@ pub enum PmxMaterialMorphOperation {
     Add,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PmxMaterialMorph {
     pub diffuse: [f32; 4],
     pub specular: [f32; 3],
@@ -294,7 +321,7 @@ pub struct PmxMaterialMorph {
     pub toon_tint: [f32; 4],
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PmxDisplayFrame {
     pub name: String,
     pub name_english: String,
@@ -302,13 +329,13 @@ pub struct PmxDisplayFrame {
     pub items: Vec<PmxDisplayFrameItem>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PmxDisplayFrameItem {
     Bone(i32),
     Morph(i32),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PmxRigidBody {
     pub name: String,
     pub name_english: String,
@@ -341,7 +368,7 @@ pub enum PmxRigidBodyMode {
     PhysicsAndBone,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PmxJoint {
     pub name: String,
     pub name_english: String,
@@ -361,9 +388,14 @@ pub struct PmxJoint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PmxJointKind {
     Spring6Dof,
+    SixDof,
+    P2p,
+    ConeTwist,
+    Slider,
+    Hinge,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PmxSoftBody {
     pub name: String,
     pub name_english: String,
