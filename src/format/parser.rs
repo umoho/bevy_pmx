@@ -41,11 +41,7 @@ impl<'a, R: Read + ?Sized> PmxParser<'a, R> {
         let display_frames = self.read_display_frames(&header)?;
         let rigid_bodies = self.read_rigid_bodies(&header)?;
         let joints = self.read_joints(&header)?;
-        let soft_bodies = if header.version >= 2.1 {
-            self.read_soft_bodies(&header)?
-        } else {
-            Vec::new()
-        };
+        let soft_bodies = Vec::new();
 
         Ok(PmxDocument {
             header,
@@ -634,68 +630,6 @@ impl<'a, R: Read + ?Sized> PmxParser<'a, R> {
         })
     }
 
-    fn read_soft_bodies(&mut self, header: &PmxHeader) -> PmxResult<Vec<PmxSoftBody>> {
-        let count = self.read_len()?;
-        let mut soft_bodies = Vec::with_capacity(count);
-        for _ in 0..count {
-            soft_bodies.push(self.read_soft_body(header)?);
-        }
-        Ok(soft_bodies)
-    }
-
-    fn read_soft_body(&mut self, header: &PmxHeader) -> PmxResult<PmxSoftBody> {
-        let name = self.read_text(header.encoding)?;
-        let name_english = self.read_text(header.encoding)?;
-        let shape = match self.read_u8()? {
-            0 => PmxSoftBodyShape::TriMesh,
-            1 => PmxSoftBodyShape::Rope,
-            _ => return Err(PmxError::InvalidFormat("unsupported PMX soft body shape")),
-        };
-        let material_index = self.read_index(header.material_index_size)?;
-        let group = self.read_u8()?;
-        let mask = self.read_u16()?;
-
-        self.read_u8()?; // flags
-        self.read_i32()?; // b_link_create_distance
-        self.read_i32()?; // number of clusters
-        self.read_f32()?; // total mass
-        self.read_f32()?; // collision margin
-        self.read_i32()?; // aerodynamics model
-        for _ in 0..12 {
-            self.read_f32()?;
-        }
-        for _ in 0..6 {
-            self.read_f32()?;
-        }
-        for _ in 0..4 {
-            self.read_i32()?;
-        }
-        for _ in 0..3 {
-            self.read_f32()?;
-        }
-
-        let anchor_count = self.read_len()?;
-        for _ in 0..anchor_count {
-            self.read_index(header.rigid_body_index_size)?;
-            self.read_vertex_index(header.vertex_index_size)?;
-            self.read_u8()?; // near mode
-        }
-
-        let pin_count = self.read_len()?;
-        for _ in 0..pin_count {
-            self.read_vertex_index(header.vertex_index_size)?;
-        }
-
-        Ok(PmxSoftBody {
-            name,
-            name_english,
-            shape,
-            material_index,
-            group,
-            mask,
-        })
-    }
-
     fn read_text(&mut self, encoding: PmxTextEncoding) -> PmxResult<String> {
         let len = self.read_len()?;
         let bytes = self.read_bytes(len)?;
@@ -727,8 +661,12 @@ impl<'a, R: Read + ?Sized> PmxParser<'a, R> {
     }
 
     fn read_vertex_index(&mut self, size: u8) -> PmxResult<u32> {
-        let index = self.read_index(size)?;
-        u32::try_from(index).map_err(|_| PmxError::InvalidFormat("vertex index cannot be negative"))
+        match size {
+            1 => Ok(u32::from(self.read_u8()?)),
+            2 => Ok(u32::from(self.read_u16()?)),
+            4 => Ok(self.read_u32()?),
+            _ => Err(PmxError::InvalidFormat("unsupported PMX index width")),
+        }
     }
 
     fn read_index(&mut self, size: u8) -> PmxResult<i32> {
@@ -783,6 +721,12 @@ impl<'a, R: Read + ?Sized> PmxParser<'a, R> {
         let mut bytes = [0u8; 4];
         self.reader.read_exact(&mut bytes)?;
         Ok(i32::from_le_bytes(bytes))
+    }
+
+    fn read_u32(&mut self) -> PmxResult<u32> {
+        let mut bytes = [0u8; 4];
+        self.reader.read_exact(&mut bytes)?;
+        Ok(u32::from_le_bytes(bytes))
     }
 
     fn read_f32(&mut self) -> PmxResult<f32> {
