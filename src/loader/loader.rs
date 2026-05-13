@@ -1,19 +1,16 @@
 use bevy::{
-    asset::{AssetLoader, LoadContext, io::Reader},
+    asset::{AssetLoader, AssetPath, LoadContext, io::Reader},
     prelude::{FromWorld, Image, Resource, World},
     reflect::TypePath,
 };
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use crate::{
     asset::Pmx,
     error::{PmxError, PmxResult},
     format::PmxDocument,
     import::{PmxImportContext, import_pmx},
-    resolver::PmxResolverSettings,
+    resolver::{PmxResolvedPath, PmxResolverSettings},
     source::PmxSource,
 };
 
@@ -21,8 +18,14 @@ use crate::{
 pub struct PmxLoaderSettings {
     pub load_textures: bool,
     pub load_meshes: bool,
+    /// Reserved for later stages. Currently a no-op because the raw PMX document already
+    /// retains bone data.
     pub load_bones: bool,
+    /// Reserved for later stages. Currently a no-op because the raw PMX document already
+    /// retains morph data.
     pub load_morphs: bool,
+    /// Reserved for later stages. Currently a no-op because the raw PMX document already
+    /// retains physics data.
     pub load_physics: bool,
     pub keep_raw_document: bool,
     pub resolver: PmxResolverSettings,
@@ -88,29 +91,24 @@ impl AssetLoader for PmxLoader {
         reader.read_to_end(&mut bytes).await?;
         let document = PmxDocument::from_bytes(&bytes)?;
 
-        let model_root = load_context
-            .path()
-            .path()
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_default();
-        let asset_root = asset_root_for_load_context(load_context);
-        let source = asset_root
-            .as_ref()
-            .map(|root| PmxSource::folder(root.join(&model_root)))
-            .unwrap_or_else(|| PmxSource::folder(model_root));
+        let source = PmxSource::folder(source_root_for_load_context(load_context));
         let import_context = PmxImportContext {
-            source: Some(source),
+            source: Some(source.clone()),
             resolver: self.settings.resolver.clone(),
             keep_raw_document: self.settings.keep_raw_document,
         };
 
         let mut result = import_pmx(document, &import_context);
+        if let Some(source_document) = result.source_document.take() {
+            result.model.document = source_document;
+        }
+
+        result.model.texture_paths = result.resolved_textures.clone();
+
         if self.settings.load_textures {
             let mut textures = Vec::with_capacity(result.resolved_textures.len());
             for texture in &result.resolved_textures {
-                let asset_path =
-                    normalize_load_path(texture.resolved_path(), asset_root.as_deref());
+                let asset_path = texture_asset_path(load_context.path(), &source, texture)?;
                 textures.push(load_context.load::<Image>(asset_path));
             }
             result.model.textures = textures;
@@ -127,48 +125,62 @@ impl AssetLoader for PmxLoader {
     }
 }
 
-fn asset_root_for_load_context(load_context: &LoadContext<'_>) -> Option<PathBuf> {
-    if load_context.path().source().as_str().is_some() {
-        return None;
-    }
+fn source_root_for_load_context(load_context: &LoadContext<'_>) -> PathBuf {
+    let model_root = load_context
+        .path()
+        .path()
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
 
-    fs::canonicalize("assets").ok()
+    if load_context.path().source().as_str().is_some() {
+        model_root
+    } else {
+        PathBuf::from("assets").join(model_root)
+    }
 }
 
-fn normalize_load_path(resolved: &Path, asset_root: Option<&Path>) -> PathBuf {
-    if let Some(asset_root) = asset_root {
-        if let Ok(stripped) = resolved.strip_prefix(asset_root) {
-            return stripped.to_path_buf();
-        }
-    }
+fn texture_asset_path(
+    model_path: &AssetPath<'static>,
+    source: &PmxSource,
+    texture: &PmxResolvedPath,
+) -> PmxResult<AssetPath<'static>> {
+    let relative = texture
+        .relative_to(source.root())
+        .ok_or(PmxError::InvalidFormat(
+            "resolved texture path is not rooted in the PMX source",
+        ))?;
+    let relative = relative.to_str().ok_or(PmxError::InvalidFormat(
+        "resolved texture path is not valid UTF-8",
+    ))?;
 
-    resolved.to_path_buf()
+    model_path.resolve_embed(relative).map_err(|_| {
+        PmxError::InvalidFormat("resolved texture path cannot be converted to an asset path")
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_load_path;
-    use std::path::Path;
+    use super::texture_asset_path;
+    use crate::resolver::PmxResolvedPath;
+    use crate::source::PmxSource;
+    use bevy::asset::AssetPath;
+    use std::path::{Path, PathBuf};
 
     #[test]
-    fn strips_assets_root_from_texture_path() {
-        let asset_root = Path::new("/Users/umoho/Devs/bevy_pmx/assets");
-        let resolved = Path::new("/Users/umoho/Devs/bevy_pmx/assets/private/foo/Texture/bar.png");
+    fn converts_resolved_texture_path_into_a_source_preserving_asset_path() {
+        let model_path = AssetPath::parse("remote://private/foo/model.pmx");
+        let source = PmxSource::folder(PathBuf::from("assets/private/foo"));
+        let texture =
+            PmxResolvedPath::new("face.png", Path::new("assets/private/foo/Texture/Face.PNG"));
 
-        let normalized = normalize_load_path(resolved, Some(asset_root));
+        let asset_path = texture_asset_path(&model_path, &source, &texture)
+            .expect("should convert into an asset path");
 
         assert_eq!(
-            normalized,
-            Path::new("private/foo/Texture/bar.png").to_path_buf()
+            asset_path.to_string(),
+            "remote://private/foo/Texture/Face.PNG"
         );
-    }
-
-    #[test]
-    fn leaves_unmatched_paths_untouched() {
-        let resolved = Path::new("/tmp/external/bar.png");
-
-        let normalized = normalize_load_path(resolved, None);
-
-        assert_eq!(normalized, resolved.to_path_buf());
+        assert_eq!(asset_path.source().as_str(), Some("remote"));
     }
 }

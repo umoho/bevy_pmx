@@ -136,6 +136,13 @@ impl PmxResolvedPath {
     pub fn resolved_path(&self) -> &Path {
         &self.resolved
     }
+
+    pub fn relative_to(&self, root: impl AsRef<Path>) -> Option<PathBuf> {
+        self.resolved
+            .strip_prefix(root.as_ref())
+            .ok()
+            .map(Path::to_path_buf)
+    }
 }
 
 fn normalize_texture_path(value: &str) -> PathBuf {
@@ -148,7 +155,7 @@ fn common_texture_directories() -> &'static [&'static str] {
 
 #[cfg(test)]
 mod tests {
-    use super::{PmxResolver, PmxResolverSettings};
+    use super::{PmxResolvedPath, PmxResolver, PmxResolverSettings};
     use crate::source::PmxSource;
     use std::{
         fs,
@@ -178,5 +185,18 @@ mod tests {
             fs::canonicalize(texture_root.join("Face.PNG"))
                 .expect("expected texture path should canonicalize")
         );
+    }
+
+    #[test]
+    fn computes_texture_path_relative_to_the_source_root() {
+        let source_root = PathBuf::from("assets/private/model");
+        let resolved =
+            PmxResolvedPath::new("face.png", source_root.join("Texture").join("Face.PNG"));
+
+        let relative = resolved
+            .relative_to(&source_root)
+            .expect("should strip the source root");
+
+        assert_eq!(relative, PathBuf::from("Texture/Face.PNG"));
     }
 }

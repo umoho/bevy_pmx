@@ -4,12 +4,16 @@ use bevy::{
     reflect::TypePath,
 };
 
-use crate::format::{PmxBone, PmxDocument};
+use crate::{
+    format::{PmxBone, PmxDocument},
+    resolver::PmxResolvedPath,
+};
 
 #[derive(Debug, Clone, PartialEq, Asset, TypePath)]
 pub struct Pmx {
     pub document: PmxDocument,
     pub textures: Vec<Handle<Image>>,
+    pub texture_paths: Vec<PmxResolvedPath>,
     pub primitives: Vec<PmxPrimitive>,
 }
 
@@ -18,6 +22,7 @@ impl Default for Pmx {
         Self {
             document: PmxDocument::default(),
             textures: Vec::new(),
+            texture_paths: Vec::new(),
             primitives: Vec::new(),
         }
     }
@@ -28,6 +33,7 @@ impl Pmx {
         Self {
             document,
             textures: Vec::new(),
+            texture_paths: Vec::new(),
             primitives,
         }
     }
@@ -40,12 +46,30 @@ impl Pmx {
         Self {
             document,
             textures,
+            texture_paths: Vec::new(),
+            primitives,
+        }
+    }
+
+    pub fn with_texture_paths(
+        document: PmxDocument,
+        texture_paths: Vec<PmxResolvedPath>,
+        primitives: Vec<PmxPrimitive>,
+    ) -> Self {
+        Self {
+            document,
+            textures: Vec::new(),
+            texture_paths,
             primitives,
         }
     }
 
     pub fn textures(&self) -> &[Handle<Image>] {
         &self.textures
+    }
+
+    pub fn texture_paths(&self) -> &[PmxResolvedPath] {
+        &self.texture_paths
     }
 
     pub fn primitives(&self) -> &[PmxPrimitive] {
