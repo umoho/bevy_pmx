@@ -14,6 +14,7 @@ use bevy::{
     asset::RenderAssetUsages,
     image::{CompressedImageFormats, ImageSampler, ImageType},
     prelude::*,
+    render::render_resource::{Face, TextureFormat},
     window::WindowPlugin,
 };
 use bevy_pmx::prelude::*;
@@ -45,6 +46,7 @@ struct ViewerScene {
 struct DecodedTexture {
     path: PmxResolvedPath,
     image: Image,
+    has_alpha: bool,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -116,29 +118,47 @@ fn setup_scene(
         .iter()
         .map(|texture| images.add(texture.image.clone()))
         .collect();
+    let texture_has_alpha: Vec<bool> = scene
+        .textures
+        .iter()
+        .map(|texture| texture.has_alpha)
+        .collect();
+    let model_transform = Transform::from_translation(-scene.bounds_center);
 
-    let base_color_texture = choose_base_color_texture(&scene.model, &texture_handles);
-    let mesh = meshes.add(scene.model.geometry().to_mesh());
-    let material = materials.add(StandardMaterial {
-        base_color: primary_material_color(&scene.model),
-        base_color_texture,
-        cull_mode: None,
-        alpha_mode: if texture_handles.is_empty() {
-            AlphaMode::Opaque
-        } else {
-            AlphaMode::Blend
-        },
-        perceptual_roughness: 0.95,
-        metallic: 0.0,
-        ..default()
-    });
+    if scene.model.primitives().is_empty() {
+        let mesh = meshes.add(scene.model.geometry().to_mesh());
+        let material = materials.add(default_viewer_material());
 
-    commands.spawn((
-        Name::new("PMX Model"),
-        Mesh3d(mesh),
-        MeshMaterial3d(material),
-        Transform::from_translation(-scene.bounds_center),
-    ));
+        commands.spawn((
+            Name::new("PMX Model"),
+            Mesh3d(mesh),
+            MeshMaterial3d(material),
+            model_transform,
+        ));
+    } else {
+        for (primitive_index, primitive) in scene.model.primitives().iter().enumerate() {
+            let Some(record) = scene.model.material_records().get(primitive.material_index) else {
+                continue;
+            };
+
+            let mesh = meshes.add(scene.model.geometry().to_mesh_for_primitive(*primitive));
+            let material = materials.add(material_for_record(
+                record,
+                &texture_handles,
+                &texture_has_alpha,
+            ));
+
+            commands.spawn((
+                Name::new(format!(
+                    "PMX Primitive {primitive_index} ({})",
+                    record.material.name
+                )),
+                Mesh3d(mesh),
+                MeshMaterial3d(material),
+                model_transform.clone(),
+            ));
+        }
+    }
 
     let camera_distance = (scene.bounds_radius * 2.8).max(2.0);
     let camera_height = (scene.bounds_radius * 0.25).max(0.5);
@@ -218,28 +238,50 @@ fn build_window_title(path: &Path, model: &Pmx) -> String {
     format!("bevy_pmx - {model_name}")
 }
 
-fn primary_material_color(model: &Pmx) -> Color {
-    model
-        .material_records()
-        .first()
-        .map(|record| {
-            let [r, g, b, _] = record.material.diffuse;
-            Color::srgb(r, g, b)
-        })
-        .unwrap_or_else(|| Color::srgb(0.85, 0.85, 0.85))
+fn default_viewer_material() -> StandardMaterial {
+    StandardMaterial {
+        base_color: Color::srgb(0.85, 0.85, 0.85),
+        cull_mode: Some(Face::Back),
+        double_sided: false,
+        alpha_mode: AlphaMode::Opaque,
+        perceptual_roughness: 0.95,
+        metallic: 0.0,
+        ..default()
+    }
 }
 
-fn choose_base_color_texture(
-    model: &Pmx,
+fn material_for_record(
+    record: &PmxMaterialRecord,
     texture_handles: &[Handle<Image>],
-) -> Option<Handle<Image>> {
-    let diffuse_index = model.material_records().first().and_then(|record| {
-        (record.material.texture_index >= 0).then_some(record.material.texture_index as usize)
-    });
+    texture_has_alpha: &[bool],
+) -> StandardMaterial {
+    let material = &record.material;
+    let diffuse_texture = (material.texture_index >= 0)
+        .then_some(material.texture_index as usize)
+        .and_then(|index| texture_handles.get(index).cloned());
+    let diffuse_texture_has_alpha = (material.texture_index >= 0)
+        .then_some(material.texture_index as usize)
+        .and_then(|index| texture_has_alpha.get(index).copied())
+        .unwrap_or(false);
+    let [r, g, b, a] = material.diffuse;
+    let no_cull = material.flags.contains(PmxMaterialFlags::NO_CULL);
 
-    diffuse_index
-        .and_then(|index| texture_handles.get(index).cloned())
-        .or_else(|| texture_handles.first().cloned())
+    StandardMaterial {
+        base_color: Color::srgba(r, g, b, a),
+        base_color_texture: diffuse_texture.clone(),
+        cull_mode: if no_cull { None } else { Some(Face::Back) },
+        double_sided: no_cull,
+        alpha_mode: if a < 0.999 {
+            AlphaMode::Blend
+        } else if diffuse_texture_has_alpha {
+            AlphaMode::AlphaToCoverage
+        } else {
+            AlphaMode::Opaque
+        },
+        perceptual_roughness: 0.95,
+        metallic: 0.0,
+        ..default()
+    }
 }
 
 fn load_textures(paths: &[PmxResolvedPath]) -> Result<Vec<DecodedTexture>, io::Error> {
@@ -248,9 +290,11 @@ fn load_textures(paths: &[PmxResolvedPath]) -> Result<Vec<DecodedTexture>, io::E
     for path in paths {
         let bytes = fs::read(path.resolved_path())?;
         let image = decode_texture(path.resolved_path(), &bytes)?;
+        let has_alpha = image_has_alpha(&image);
         textures.push(DecodedTexture {
             path: path.clone(),
             image,
+            has_alpha,
         });
     }
 
@@ -284,6 +328,41 @@ fn decode_texture(path: &Path, bytes: &[u8]) -> Result<Image, io::Error> {
             format!("failed to decode texture {}: {error}", path.display()),
         )
     })
+}
+
+fn image_has_alpha(image: &Image) -> bool {
+    matches!(
+        image.texture_descriptor.format,
+        TextureFormat::Rgba8Unorm
+            | TextureFormat::Rgba8UnormSrgb
+            | TextureFormat::Rgba8Snorm
+            | TextureFormat::Rgba8Uint
+            | TextureFormat::Rgba8Sint
+            | TextureFormat::Bgra8Unorm
+            | TextureFormat::Bgra8UnormSrgb
+            | TextureFormat::Rgb10a2Unorm
+            | TextureFormat::Rgb10a2Uint
+            | TextureFormat::Rgba16Unorm
+            | TextureFormat::Rgba16Snorm
+            | TextureFormat::Rgba16Uint
+            | TextureFormat::Rgba16Sint
+            | TextureFormat::Rgba16Float
+            | TextureFormat::Rgba32Uint
+            | TextureFormat::Rgba32Sint
+            | TextureFormat::Rgba32Float
+            | TextureFormat::Bc1RgbaUnorm
+            | TextureFormat::Bc1RgbaUnormSrgb
+            | TextureFormat::Bc2RgbaUnorm
+            | TextureFormat::Bc2RgbaUnormSrgb
+            | TextureFormat::Bc3RgbaUnorm
+            | TextureFormat::Bc3RgbaUnormSrgb
+            | TextureFormat::Bc7RgbaUnorm
+            | TextureFormat::Bc7RgbaUnormSrgb
+            | TextureFormat::Etc2Rgb8A1Unorm
+            | TextureFormat::Etc2Rgb8A1UnormSrgb
+            | TextureFormat::Etc2Rgba8Unorm
+            | TextureFormat::Etc2Rgba8UnormSrgb
+    )
 }
 
 fn bounds_for_geometry(geometry: &PmxMeshGeometry) -> (Vec3, f32) {

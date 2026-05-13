@@ -44,6 +44,30 @@ impl PmxMeshGeometry {
     }
 
     pub fn to_mesh(&self) -> Mesh {
+        self.mesh_with_indices(&self.indices)
+    }
+
+    pub fn to_mesh_for_primitive(&self, primitive: PmxPrimitive) -> Mesh {
+        let index_end = primitive
+            .index_start
+            .checked_add(primitive.index_count)
+            .expect("PMX primitive index range overflowed");
+        let indices = self
+            .indices
+            .get(primitive.index_start..index_end)
+            .unwrap_or_else(|| {
+                panic!(
+                    "PMX primitive index range {}..{} exceeds geometry index buffer length {}",
+                    primitive.index_start,
+                    index_end,
+                    self.indices.len()
+                )
+            });
+
+        self.mesh_with_indices(indices)
+    }
+
+    fn mesh_with_indices(&self, indices: &[u32]) -> Mesh {
         debug_assert_eq!(self.positions.len(), self.normals.len());
         debug_assert_eq!(self.positions.len(), self.uvs.len());
 
@@ -54,7 +78,7 @@ impl PmxMeshGeometry {
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.positions.clone());
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals.clone());
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs.clone());
-        mesh.insert_indices(Indices::U32(self.indices.clone()));
+        mesh.insert_indices(Indices::U32(indices.to_vec()));
         mesh
     }
 }
@@ -119,6 +143,41 @@ fn texture_handle(textures: &[Handle<Image>], texture_index: i32) -> Option<Hand
     (texture_index >= 0)
         .then(|| textures.get(texture_index as usize).cloned())
         .flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PmxMeshGeometry, PmxPrimitive};
+
+    #[test]
+    fn primitive_mesh_uses_only_its_index_range() {
+        let geometry = PmxMeshGeometry {
+            positions: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            normals: vec![[0.0, 0.0, 1.0]; 4],
+            uvs: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+            indices: vec![0, 1, 2, 0, 2, 3],
+        };
+        let primitive = PmxPrimitive {
+            material_index: 0,
+            index_start: 3,
+            index_count: 3,
+        };
+
+        let mesh = geometry.to_mesh_for_primitive(primitive);
+
+        assert_eq!(mesh.count_vertices(), 4);
+
+        let indices = mesh.indices().expect("mesh should contain indices");
+        match indices {
+            bevy::mesh::Indices::U32(values) => assert_eq!(values, &vec![0, 2, 3]),
+            bevy::mesh::Indices::U16(values) => panic!("expected u32 indices, got {values:?}"),
+        }
+    }
 }
 
 /// Root PMX asset produced by the loader.

@@ -36,6 +36,15 @@ impl PmxBoneFlags {
 pub struct PmxMaterialFlags(pub u8);
 
 impl PmxMaterialFlags {
+    pub const NO_CULL: u8 = 0x01;
+    pub const GROUND_SHADOW: u8 = 0x02;
+    pub const DRAW_SHADOW: u8 = 0x04;
+    pub const RECEIVE_SHADOW: u8 = 0x08;
+    pub const HAS_EDGE: u8 = 0x10;
+    pub const VERTEX_COLOR: u8 = 0x20;
+    pub const POINT_DRAWING: u8 = 0x40;
+    pub const LINE_DRAWING: u8 = 0x80;
+
     pub fn contains(self, flag: u8) -> bool {
         self.0 & flag != 0
     }
