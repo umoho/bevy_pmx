@@ -24,6 +24,12 @@
 - [ ] (阶段 2) Morph
 - [ ] (阶段 2) 物理
 - [ ] (阶段 3) Zip
-- [ ] (阶段 3) 样例
+- [x] (阶段 3) 样例
 - [ ] (阶段 3) 测试
 - [ ] (阶段 3) 文档
+
+## 示例
+
+```bash
+cargo run --example pmx_viewer -- path/to/model.pmx
+```
