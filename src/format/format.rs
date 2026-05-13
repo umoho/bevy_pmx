@@ -175,6 +175,9 @@ pub struct PmxMaterial {
     pub toon_sharing: bool,
     pub toon_texture_index: i32,
     pub comment: String,
+    /// Number of vertex indices contributed by this material.
+    ///
+    /// PMX stores material coverage as a triangle-index count, not as a primitive count.
     pub surface_count: u32,
 }
 

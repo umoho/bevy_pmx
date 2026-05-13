@@ -10,6 +10,7 @@ use crate::{
     error::{PmxError, PmxResult},
     format::PmxDocument,
     import::{PmxImportContext, import_pmx},
+    labels::PmxAssetLabel,
     resolver::{PmxResolvedPath, PmxResolverSettings},
     source::PmxSource,
 };
@@ -17,16 +18,18 @@ use crate::{
 #[derive(Debug, Clone, Resource, PartialEq, Eq)]
 pub struct PmxLoaderSettings {
     pub load_textures: bool,
+    /// Materializes a Bevy `Mesh` subasset and stores its handle on `Pmx::mesh_handle`.
     pub load_meshes: bool,
-    /// Reserved for later stages. Currently a no-op because the raw PMX document already
-    /// retains bone data.
+    /// Reserved for later stages. Currently a no-op because stage 1 does not build bone
+    /// runtime assets.
     pub load_bones: bool,
-    /// Reserved for later stages. Currently a no-op because the raw PMX document already
-    /// retains morph data.
+    /// Reserved for later stages. Currently a no-op because stage 1 does not build morph
+    /// runtime assets.
     pub load_morphs: bool,
-    /// Reserved for later stages. Currently a no-op because the raw PMX document already
-    /// retains physics data.
+    /// Reserved for later stages. Currently a no-op because stage 1 does not build physics
+    /// runtime assets.
     pub load_physics: bool,
+    /// Retains the original parsed PMX document in `Pmx::raw_document`.
     pub keep_raw_document: bool,
     pub resolver: PmxResolverSettings,
 }
@@ -98,26 +101,25 @@ impl AssetLoader for PmxLoader {
             keep_raw_document: self.settings.keep_raw_document,
         };
 
-        let mut result = import_pmx(document, &import_context);
-        if let Some(source_document) = result.source_document.take() {
-            result.model.document = source_document;
-        }
-
-        result.model.texture_paths = result.resolved_textures.clone();
+        let mut model = import_pmx(document, &import_context).model;
 
         if self.settings.load_textures {
-            let mut textures = Vec::with_capacity(result.resolved_textures.len());
-            for texture in &result.resolved_textures {
+            let texture_paths = model.texture_paths.clone();
+            let mut textures = Vec::with_capacity(texture_paths.len());
+            for texture in &texture_paths {
                 let asset_path = texture_asset_path(load_context.path(), &source, texture)?;
                 textures.push(load_context.load::<Image>(asset_path));
             }
-            result.model.textures = textures;
-        }
-        if !self.settings.load_meshes {
-            result.model.primitives.clear();
+            model = model.with_textures(textures);
         }
 
-        Ok(result.model)
+        if self.settings.load_meshes {
+            let mesh = model.geometry.to_mesh();
+            let mesh_handle = load_context.add_labeled_asset(PmxAssetLabel::Mesh.to_string(), mesh);
+            model = model.with_mesh_handle(mesh_handle);
+        }
+
+        Ok(model)
     }
 
     fn extensions(&self) -> &[&str] {
