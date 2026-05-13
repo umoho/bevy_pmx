@@ -6,7 +6,7 @@ use bevy::{
 use std::path::{Path, PathBuf};
 
 use crate::{
-    asset::Pmx,
+    asset::{Pmx, PmxMaterialAsset},
     error::{PmxError, PmxResult},
     format::PmxDocument,
     import::{PmxImportContext, import_pmx},
@@ -18,6 +18,8 @@ use crate::{
 #[derive(Debug, Clone, Resource, PartialEq, Eq)]
 pub struct PmxLoaderSettings {
     pub load_textures: bool,
+    /// Materializes PMX material subassets and stores their handles on `Pmx::material_handles`.
+    pub load_materials: bool,
     /// Materializes a Bevy `Mesh` subasset and stores its handle on `Pmx::mesh_handle`.
     pub load_meshes: bool,
     /// Reserved for later stages. Currently a no-op because stage 1 does not build bone
@@ -38,6 +40,7 @@ impl Default for PmxLoaderSettings {
     fn default() -> Self {
         Self {
             load_textures: true,
+            load_materials: true,
             load_meshes: true,
             load_bones: true,
             load_morphs: true,
@@ -113,6 +116,23 @@ impl AssetLoader for PmxLoader {
             model = model.with_textures(textures);
         }
 
+        if self.settings.load_materials {
+            let material_records = model.material_records.clone();
+            let texture_handles = model.textures.clone();
+            let mut material_handles = Vec::with_capacity(material_records.len());
+
+            for (material_index, record) in material_records.iter().enumerate() {
+                let material = PmxMaterialAsset::from_record(record, &texture_handles);
+                let material_handle = load_context.add_labeled_asset(
+                    PmxAssetLabel::Material(material_index).to_string(),
+                    material,
+                );
+                material_handles.push(material_handle);
+            }
+
+            model = model.with_material_handles(material_handles);
+        }
+
         if self.settings.load_meshes {
             let mesh = model.geometry.to_mesh();
             let mesh_handle = load_context.add_labeled_asset(PmxAssetLabel::Mesh.to_string(), mesh);
@@ -164,9 +184,11 @@ fn texture_asset_path(
 #[cfg(test)]
 mod tests {
     use super::texture_asset_path;
+    use crate::asset::{PmxMaterialAsset, PmxMaterialRecord};
     use crate::resolver::PmxResolvedPath;
     use crate::source::PmxSource;
     use bevy::asset::AssetPath;
+    use bevy::prelude::Image;
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -184,5 +206,70 @@ mod tests {
             "remote://private/foo/Texture/Face.PNG"
         );
         assert_eq!(asset_path.source().as_str(), Some("remote"));
+    }
+
+    #[test]
+    fn material_assets_bind_loaded_texture_handles_in_document_order() {
+        let record = PmxMaterialRecord::new(crate::format::PmxMaterial {
+            name: "mat".to_owned(),
+            name_english: "mat".to_owned(),
+            diffuse: [1.0, 1.0, 1.0, 1.0],
+            specular: [0.0, 0.0, 0.0],
+            specular_strength: 1.0,
+            ambient: [0.0, 0.0, 0.0],
+            flags: crate::format::PmxMaterialFlags::default(),
+            edge_color: [0.0, 0.0, 0.0, 0.0],
+            edge_size: 1.0,
+            texture_index: 0,
+            sphere_texture_index: 1,
+            sphere_mode: crate::format::PmxSphereMode::Multiply,
+            toon_sharing: false,
+            toon_texture_index: 2,
+            comment: String::new(),
+            surface_count: 3,
+        });
+        let textures = vec![
+            bevy::asset::Handle::<Image>::from(bevy::asset::uuid::Uuid::from_u128(1)),
+            bevy::asset::Handle::<Image>::from(bevy::asset::uuid::Uuid::from_u128(2)),
+            bevy::asset::Handle::<Image>::from(bevy::asset::uuid::Uuid::from_u128(3)),
+        ];
+
+        let material = PmxMaterialAsset::from_record(&record, &textures);
+
+        assert_eq!(material.material.name, "mat");
+        assert_eq!(material.diffuse_texture.as_ref(), Some(&textures[0]));
+        assert_eq!(material.sphere_texture.as_ref(), Some(&textures[1]));
+        assert_eq!(material.toon_texture.as_ref(), Some(&textures[2]));
+        assert_eq!(material.shared_toon_index, None);
+    }
+
+    #[test]
+    fn shared_toon_materials_keep_the_shared_toon_index() {
+        let record = PmxMaterialRecord::new(crate::format::PmxMaterial {
+            name: "toon".to_owned(),
+            name_english: "toon".to_owned(),
+            diffuse: [1.0, 1.0, 1.0, 1.0],
+            specular: [0.0, 0.0, 0.0],
+            specular_strength: 1.0,
+            ambient: [0.0, 0.0, 0.0],
+            flags: crate::format::PmxMaterialFlags::default(),
+            edge_color: [0.0, 0.0, 0.0, 0.0],
+            edge_size: 1.0,
+            texture_index: -1,
+            sphere_texture_index: -1,
+            sphere_mode: crate::format::PmxSphereMode::Disabled,
+            toon_sharing: true,
+            toon_texture_index: 4,
+            comment: String::new(),
+            surface_count: 3,
+        });
+        let textures: Vec<bevy::asset::Handle<Image>> = Vec::new();
+
+        let material = PmxMaterialAsset::from_record(&record, &textures);
+
+        assert!(material.diffuse_texture.is_none());
+        assert!(material.sphere_texture.is_none());
+        assert!(material.toon_texture.is_none());
+        assert_eq!(material.shared_toon_index, Some(4));
     }
 }

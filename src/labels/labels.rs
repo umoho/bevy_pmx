@@ -34,4 +34,9 @@ mod tests {
         assert_eq!(PmxAssetLabel::Mesh.to_string(), "Mesh");
         assert_eq!(PmxAssetLabel::Texture(3).to_string(), "Texture/3");
     }
+
+    #[test]
+    fn material_labels_match_the_actual_material_subasset_name() {
+        assert_eq!(PmxAssetLabel::Material(7).to_string(), "Material/7");
+    }
 }

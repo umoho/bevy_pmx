@@ -1,5 +1,5 @@
 use crate::{
-    asset::{Pmx, PmxMeshGeometry, PmxPrimitive},
+    asset::{Pmx, PmxMaterialRecord, PmxMeshGeometry, PmxPrimitive},
     format::{PmxDocument, PmxMaterial},
     resolver::{PmxResolvedPath, PmxResolver, PmxResolverSettings},
     source::PmxSource,
@@ -45,9 +45,12 @@ pub fn import_pmx(document: PmxDocument, context: &PmxImportContext) -> PmxImpor
     let resolved_textures = resolve_textures(&document, context);
     let geometry = PmxMeshGeometry::from_document(&document);
     let primitives = build_primitives(&document.materials);
+    let material_records = build_material_records(&document.materials);
     let raw_document = context.keep_raw_document.then(|| document.clone());
 
-    let model = Pmx::new(raw_document, geometry, primitives).with_texture_paths(resolved_textures);
+    let model = Pmx::new(raw_document, geometry, primitives)
+        .with_texture_paths(resolved_textures)
+        .with_material_records(material_records);
 
     PmxImportResult { model }
 }
@@ -79,6 +82,14 @@ fn build_primitives(materials: &[PmxMaterial]) -> Vec<PmxPrimitive> {
     }
 
     primitives
+}
+
+fn build_material_records(materials: &[PmxMaterial]) -> Vec<PmxMaterialRecord> {
+    materials
+        .iter()
+        .cloned()
+        .map(PmxMaterialRecord::new)
+        .collect()
 }
 
 #[cfg(test)]
@@ -184,13 +195,17 @@ mod tests {
                 .map(|v| v.position)
                 .collect::<Vec<_>>()
         );
+        assert_eq!(kept.model.material_records.len(), 1);
+        assert_eq!(kept.model.material_records[0].material.name, "mat");
         assert_eq!(kept.model.primitives.len(), 1);
         assert_eq!(kept.model.primitives[0].index_count, 3);
+        assert_eq!(kept.model.primitives[0].material_index, 0);
         assert_eq!(kept.model.texture_paths.len(), 1);
 
         let dropped = import_pmx(document, &drop_context);
         assert!(dropped.model.raw_document().is_none());
         assert_eq!(dropped.model.geometry.indices, vec![0, 1, 2]);
+        assert_eq!(dropped.model.material_records.len(), 1);
     }
 
     #[test]

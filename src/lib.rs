@@ -5,7 +5,8 @@
 //! - `source`: locate files on disk; start with folders, later add zip.
 //! - `resolver`: turn PMX texture strings into concrete paths.
 //! - `import`: convert PMX data into Bevy-friendly structures.
-//! - `asset`: public asset types such as `Pmx`, `PmxPrimitive`, and `PmxMeshGeometry`.
+//! - `asset`: public asset types such as `Pmx`, `PmxMaterialAsset`, `PmxPrimitive`, and
+//!   `PmxMeshGeometry`.
 //! - `loader`: Bevy asset loader entry and settings.
 //! - `plugin`: Bevy plugin registration and configuration.
 
@@ -21,7 +22,7 @@ pub mod plugin;
 pub mod resolver;
 pub mod source;
 
-pub use asset::{Pmx, PmxMeshGeometry, PmxPrimitive};
+pub use asset::{Pmx, PmxMaterialAsset, PmxMaterialRecord, PmxMeshGeometry, PmxPrimitive};
 pub use error::{PmxError, PmxResult};
 pub use format::{PmxDocument, PmxHeader, parse_pmx};
 pub use import::{PmxImportContext, PmxImportResult, import_pmx, resolve_textures};
@@ -32,7 +33,9 @@ pub use resolver::{PmxResolvedPath, PmxResolver, PmxResolverSettings};
 pub use source::{PmxFolderSource, PmxSource};
 
 pub mod prelude {
-    pub use crate::asset::{Pmx, PmxMeshGeometry, PmxPrimitive};
+    pub use crate::asset::{
+        Pmx, PmxMaterialAsset, PmxMaterialRecord, PmxMeshGeometry, PmxPrimitive,
+    };
     pub use crate::error::{PmxError, PmxResult};
     pub use crate::format::parse_pmx;
     pub use crate::format::{

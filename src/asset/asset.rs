@@ -7,7 +7,7 @@ use bevy::{
 };
 
 use crate::{
-    format::{PmxBone, PmxDocument},
+    format::{PmxBone, PmxDocument, PmxMaterial},
     resolver::PmxResolvedPath,
 };
 
@@ -59,17 +59,84 @@ impl PmxMeshGeometry {
     }
 }
 
+/// Imported PMX material data kept on the root asset.
+///
+/// This preserves the original `format::PmxMaterial` information even when the raw document is
+/// dropped, so the loader can later materialize a runtime material subasset.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PmxMaterialRecord {
+    pub material: PmxMaterial,
+}
+
+impl PmxMaterialRecord {
+    pub fn new(material: PmxMaterial) -> Self {
+        Self { material }
+    }
+}
+
+/// Runtime PMX material subasset produced by the loader.
+///
+/// The raw PMX material is preserved in `material`, while the optional texture handles point to
+/// already loaded Bevy images. `shared_toon_index` is used when the PMX material references one of
+/// the shared toon textures instead of a document texture.
+#[derive(Debug, Clone, PartialEq, Asset, TypePath)]
+pub struct PmxMaterialAsset {
+    pub material: PmxMaterial,
+    #[dependency]
+    pub diffuse_texture: Option<Handle<Image>>,
+    #[dependency]
+    pub sphere_texture: Option<Handle<Image>>,
+    #[dependency]
+    pub toon_texture: Option<Handle<Image>>,
+    pub shared_toon_index: Option<usize>,
+}
+
+impl PmxMaterialAsset {
+    pub fn from_record(record: &PmxMaterialRecord, textures: &[Handle<Image>]) -> Self {
+        let material = record.material.clone();
+        let diffuse_texture = texture_handle(textures, material.texture_index);
+        let sphere_texture = texture_handle(textures, material.sphere_texture_index);
+        let (toon_texture, shared_toon_index) = if material.toon_sharing {
+            (
+                None,
+                (material.toon_texture_index >= 0).then_some(material.toon_texture_index as usize),
+            )
+        } else {
+            (texture_handle(textures, material.toon_texture_index), None)
+        };
+
+        Self {
+            material,
+            diffuse_texture,
+            sphere_texture,
+            toon_texture,
+            shared_toon_index,
+        }
+    }
+}
+
+fn texture_handle(textures: &[Handle<Image>], texture_index: i32) -> Option<Handle<Image>> {
+    (texture_index >= 0)
+        .then(|| textures.get(texture_index as usize).cloned())
+        .flatten()
+}
+
 /// Root PMX asset produced by the loader.
 ///
-/// `raw_document` is present only when `keep_raw_document` is enabled. `geometry` and
-/// `primitives` are always kept so the model can be rendered or re-materialized later, and
-/// `mesh_handle` is filled when the loader materializes a Bevy `Mesh` subasset.
+/// `raw_document` is present only when `keep_raw_document` is enabled. `geometry`,
+/// `primitives`, and `material_records` are always kept so the model can be rendered or
+/// re-materialized later, and `mesh_handle` / `material_handles` are filled when the loader
+/// materializes Bevy subassets.
 #[derive(Debug, Clone, PartialEq, Asset, TypePath)]
 pub struct Pmx {
     pub raw_document: Option<PmxDocument>,
     pub geometry: PmxMeshGeometry,
     pub textures: Vec<Handle<Image>>,
     pub texture_paths: Vec<PmxResolvedPath>,
+    /// Imported PMX material records kept so the loader can materialize subassets.
+    pub material_records: Vec<PmxMaterialRecord>,
+    /// PMX material subasset handles in the same order as `material_records`.
+    pub material_handles: Vec<Handle<PmxMaterialAsset>>,
     pub mesh_handle: Option<Handle<Mesh>>,
     pub primitives: Vec<PmxPrimitive>,
 }
@@ -81,6 +148,8 @@ impl Default for Pmx {
             geometry: PmxMeshGeometry::default(),
             textures: Vec::new(),
             texture_paths: Vec::new(),
+            material_records: Vec::new(),
+            material_handles: Vec::new(),
             mesh_handle: None,
             primitives: Vec::new(),
         }
@@ -98,6 +167,8 @@ impl Pmx {
             geometry,
             textures: Vec::new(),
             texture_paths: Vec::new(),
+            material_records: Vec::new(),
+            material_handles: Vec::new(),
             mesh_handle: None,
             primitives,
         }
@@ -105,6 +176,19 @@ impl Pmx {
 
     pub fn with_texture_paths(mut self, texture_paths: Vec<PmxResolvedPath>) -> Self {
         self.texture_paths = texture_paths;
+        self
+    }
+
+    pub fn with_material_records(mut self, material_records: Vec<PmxMaterialRecord>) -> Self {
+        self.material_records = material_records;
+        self
+    }
+
+    pub fn with_material_handles(
+        mut self,
+        material_handles: Vec<Handle<PmxMaterialAsset>>,
+    ) -> Self {
+        self.material_handles = material_handles;
         self
     }
 
@@ -138,6 +222,14 @@ impl Pmx {
         &self.texture_paths
     }
 
+    pub fn material_records(&self) -> &[PmxMaterialRecord] {
+        &self.material_records
+    }
+
+    pub fn material_handles(&self) -> &[Handle<PmxMaterialAsset>] {
+        &self.material_handles
+    }
+
     pub fn mesh_handle(&self) -> Option<&Handle<Mesh>> {
         self.mesh_handle.as_ref()
     }
@@ -155,6 +247,7 @@ impl Pmx {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PmxPrimitive {
+    /// Index into `Pmx::material_records` and `Pmx::material_handles`.
     pub material_index: usize,
     pub index_start: usize,
     pub index_count: usize,
