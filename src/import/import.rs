@@ -39,20 +39,24 @@ impl PmxImportContext {
 pub struct PmxImportResult {
     pub model: Pmx,
     pub source_document: Option<PmxDocument>,
+    pub resolved_textures: Vec<PmxResolvedPath>,
 }
 
 pub fn import_pmx(document: PmxDocument, context: &PmxImportContext) -> PmxImportResult {
+    let resolved_textures = resolve_textures(&document, context);
     let primitives = build_primitives(&document.materials);
 
     if context.keep_raw_document {
         PmxImportResult {
             model: Pmx::new(document, primitives),
             source_document: None,
+            resolved_textures,
         }
     } else {
         PmxImportResult {
             model: Pmx::new(PmxDocument::default(), primitives),
             source_document: Some(document),
+            resolved_textures,
         }
     }
 }
