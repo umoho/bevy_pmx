@@ -14,8 +14,8 @@ use bevy::{
     asset::RenderAssetUsages,
     image::{CompressedImageFormats, ImageSampler, ImageType},
     prelude::*,
-    render::render_resource::{Face, TextureFormat},
-    window::WindowPlugin,
+    render::render_resource::{Extent3d, Face, TextureDimension, TextureFormat},
+    window::{PrimaryWindow, WindowPlugin},
 };
 use bevy_pmx::prelude::*;
 use clap::Parser;
@@ -33,6 +33,11 @@ struct Cli {
 }
 
 #[derive(Debug, Resource)]
+struct SceneRequest {
+    path: PathBuf,
+}
+
+#[derive(Debug)]
 struct ViewerScene {
     path: PathBuf,
     model: Pmx,
@@ -47,38 +52,42 @@ struct DecodedTexture {
     path: PmxResolvedPath,
     image: Image,
     has_alpha: bool,
+    fallback: bool,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
-    let scene = load_scene(&cli.path)?;
-    let window_title = scene.title.clone();
 
     App::new()
+        .insert_resource(SceneRequest { path: cli.path })
         .insert_resource(GlobalAmbientLight {
             color: Color::WHITE,
             brightness: 200.0,
             ..default()
         })
-        .insert_resource(scene)
         .add_plugins((
             DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
-                    title: window_title,
+                    title: "bevy_pmx".to_owned(),
                     ..default()
                 }),
                 ..default()
             }),
             PmxPlugin::default(),
         ))
-        .add_systems(Startup, (log_scene_summary, setup_scene))
+        .add_systems(Startup, bootstrap_scene)
         .run();
 
     Ok(())
 }
 
 fn load_scene(path: &Path) -> Result<ViewerScene, Box<dyn Error>> {
-    let bytes = fs::read(path)?;
+    let bytes = fs::read(path).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("failed to read PMX file {}: {error}", path.display()),
+        )
+    })?;
     let document = parse_pmx(&bytes)?;
     let source_root = path.parent().unwrap_or_else(|| Path::new("."));
     let context = PmxImportContext::with_source(PmxSource::folder(source_root));
@@ -92,7 +101,7 @@ fn load_scene(path: &Path) -> Result<ViewerScene, Box<dyn Error>> {
         .into());
     }
 
-    let textures = load_textures(model.texture_paths())?;
+    let textures = load_textures(model.texture_paths());
     let (bounds_center, bounds_radius) = bounds_for_geometry(model.geometry());
     let title = build_window_title(path, &model);
 
@@ -106,12 +115,45 @@ fn load_scene(path: &Path) -> Result<ViewerScene, Box<dyn Error>> {
     })
 }
 
-fn setup_scene(
+fn bootstrap_scene(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    scene: Res<ViewerScene>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    request: Res<SceneRequest>,
+) {
+    let scene = load_scene(&request.path).unwrap_or_else(|error| {
+        error!(
+            "failed to load PMX scene {}: {error}",
+            request.path.display()
+        );
+        panic!(
+            "failed to load PMX scene {}: {error}",
+            request.path.display()
+        );
+    });
+
+    if let Ok(mut window) = windows.single_mut() {
+        window.title = scene.title.clone();
+    }
+
+    log_scene_summary(&scene);
+    setup_scene(
+        &mut commands,
+        &mut images,
+        &mut meshes,
+        &mut materials,
+        &scene,
+    );
+}
+
+fn setup_scene(
+    commands: &mut Commands,
+    images: &mut Assets<Image>,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    scene: &ViewerScene,
 ) {
     let texture_handles: Vec<Handle<Image>> = scene
         .textures
@@ -179,7 +221,7 @@ fn setup_scene(
     ));
 }
 
-fn log_scene_summary(scene: Res<ViewerScene>) {
+fn log_scene_summary(scene: &ViewerScene) {
     let model_name = scene
         .model
         .raw_document()
@@ -205,13 +247,23 @@ fn log_scene_summary(scene: Res<ViewerScene>) {
     info!("Decoded textures: {}", scene.textures.len());
     for (index, texture) in scene.textures.iter().enumerate() {
         let size = texture.image.texture_descriptor.size;
-        info!(
-            "  [{index}] {} -> {} ({}x{})",
-            texture.path.original,
-            texture.path.resolved.display(),
-            size.width,
-            size.height
-        );
+        if texture.fallback {
+            info!(
+                "  [{index}] {} -> {} (placeholder, {}x{})",
+                texture.path.original,
+                texture.path.resolved.display(),
+                size.width,
+                size.height
+            );
+        } else {
+            info!(
+                "  [{index}] {} -> {} ({}x{})",
+                texture.path.original,
+                texture.path.resolved.display(),
+                size.width,
+                size.height
+            );
+        }
     }
     info!("Bones: {}", scene.model.bones().len());
 }
@@ -284,21 +336,51 @@ fn material_for_record(
     }
 }
 
-fn load_textures(paths: &[PmxResolvedPath]) -> Result<Vec<DecodedTexture>, io::Error> {
+fn load_textures(paths: &[PmxResolvedPath]) -> Vec<DecodedTexture> {
     let mut textures = Vec::with_capacity(paths.len());
 
     for path in paths {
-        let bytes = fs::read(path.resolved_path())?;
-        let image = decode_texture(path.resolved_path(), &bytes)?;
-        let has_alpha = image_has_alpha(&image);
-        textures.push(DecodedTexture {
-            path: path.clone(),
-            image,
-            has_alpha,
-        });
+        match load_texture(path) {
+            Ok((image, has_alpha)) => textures.push(DecodedTexture {
+                path: path.clone(),
+                image,
+                has_alpha,
+                fallback: false,
+            }),
+            Err(error) => {
+                warn!(
+                    "missing texture: {} (resolved to {}) - using magenta placeholder",
+                    path.original,
+                    path.resolved_path().display()
+                );
+                warn!("  read error: {error}");
+                textures.push(DecodedTexture {
+                    path: path.clone(),
+                    image: placeholder_texture_image(),
+                    has_alpha: false,
+                    fallback: true,
+                });
+            }
+        }
     }
 
-    Ok(textures)
+    textures
+}
+
+fn load_texture(path: &PmxResolvedPath) -> Result<(Image, bool), io::Error> {
+    let bytes = fs::read(path.resolved_path()).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "failed to read texture {} (resolved to {})",
+                path.original,
+                path.resolved_path().display()
+            ),
+        )
+    })?;
+    let image = decode_texture(path.resolved_path(), &bytes)?;
+    let has_alpha = image_has_alpha(&image);
+    Ok((image, has_alpha))
 }
 
 fn decode_texture(path: &Path, bytes: &[u8]) -> Result<Image, io::Error> {
@@ -362,6 +444,20 @@ fn image_has_alpha(image: &Image) -> bool {
             | TextureFormat::Etc2Rgb8A1UnormSrgb
             | TextureFormat::Etc2Rgba8Unorm
             | TextureFormat::Etc2Rgba8UnormSrgb
+    )
+}
+
+fn placeholder_texture_image() -> Image {
+    Image::new_fill(
+        Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &[255, 0, 255, 255],
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
     )
 }
 
