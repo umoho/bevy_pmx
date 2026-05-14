@@ -259,6 +259,7 @@ fn log_scene_summary(scene: &LoadedScene, textures: &[DecodedTexture]) {
     info!("Indices: {}", scene.model.geometry().indices.len());
     info!("Primitives: {}", scene.model.primitives().len());
     info!("Materials: {}", scene.model.material_records().len());
+    info!("Morphs: {}", scene.model.morph_records().len());
     info!("Textures: {}", scene.model.texture_paths().len());
     info!("Decoded textures: {}", textures.len());
     for (index, texture) in textures.iter().enumerate() {

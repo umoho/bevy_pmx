@@ -44,4 +44,9 @@ mod tests {
     fn bone_labels_match_the_actual_bone_subasset_name() {
         assert_eq!(PmxAssetLabel::Bone(7).to_string(), "Bone/7");
     }
+
+    #[test]
+    fn morph_labels_match_the_actual_morph_subasset_name() {
+        assert_eq!(PmxAssetLabel::Morph(7).to_string(), "Morph/7");
+    }
 }

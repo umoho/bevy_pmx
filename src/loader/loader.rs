@@ -24,8 +24,7 @@ pub struct PmxLoaderSettings {
     pub load_meshes: bool,
     /// Materializes PMX bone subassets and stores their handles on `Pmx::bone_handles`.
     pub load_bones: bool,
-    /// Reserved for later stages. Currently a no-op because morph runtime assets are not built
-    /// yet.
+    /// Materializes PMX morph subassets and stores their handles on `Pmx::morph_handles`.
     pub load_morphs: bool,
     /// Reserved for later stages. Currently a no-op because physics runtime assets are not built
     /// yet.
@@ -143,6 +142,21 @@ impl AssetLoader for PmxLoader {
             }
 
             model = model.with_bone_handles(bone_handles);
+        }
+
+        if self.settings.load_morphs {
+            let morph_records = model.morph_records.clone();
+            let mut morph_handles = Vec::with_capacity(morph_records.len());
+
+            for (morph_index, record) in morph_records.iter().enumerate() {
+                let morph_handle = load_context.add_labeled_asset(
+                    PmxAssetLabel::Morph(morph_index).to_string(),
+                    record.clone(),
+                );
+                morph_handles.push(morph_handle);
+            }
+
+            model = model.with_morph_handles(morph_handles);
         }
 
         if self.settings.load_meshes {

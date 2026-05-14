@@ -1,4 +1,5 @@
 use crate::{
+    PmxMorphRecord,
     asset::{Pmx, PmxMaterialRecord, PmxMeshGeometry, PmxPrimitive},
     bone::PmxBoneRecord,
     format::{PmxDocument, PmxMaterial},
@@ -47,12 +48,14 @@ pub fn import_pmx(document: PmxDocument, context: &PmxImportContext) -> PmxImpor
     let geometry = PmxMeshGeometry::from_document(&document);
     let primitives = build_primitives(&document.materials);
     let material_records = build_material_records(&document.materials);
+    let morph_records = PmxMorphRecord::from_document(&document.morphs);
     let bone_records = PmxBoneRecord::from_document(&document.bones);
     let raw_document = context.keep_raw_document.then(|| document.clone());
 
     let model = Pmx::new(raw_document, geometry, primitives)
         .with_texture_paths(resolved_textures)
         .with_material_records(material_records)
+        .with_morph_records(morph_records)
         .with_bone_records(bone_records);
 
     PmxImportResult { model }
@@ -269,7 +272,7 @@ mod tests {
 
         let indices = mesh.indices().expect("mesh should contain indices");
         match indices {
-            bevy::mesh::Indices::U32(values) => assert_eq!(values, &vec![0, 1, 2]),
+            bevy::mesh::Indices::U32(values) => assert_eq!(values.as_slice(), &[0, 1, 2]),
             bevy::mesh::Indices::U16(values) => panic!("expected u32 indices, got {values:?}"),
         }
     }
