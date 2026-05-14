@@ -8,18 +8,32 @@ use bevy_pmx::prelude::*;
 use encoding_rs::SHIFT_JIS;
 use std::{
     fs,
-    io::Write,
+    io::{self, Write},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::atomic::{AtomicU64, Ordering},
 };
 use zip::{ZipWriter, write::SimpleFileOptions};
 
-fn unique_temp_path(prefix: &str, extension: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be monotonic")
-        .as_nanos();
-    std::env::temp_dir().join(format!("{prefix}_{unique}{extension}"))
+static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+fn unique_temp_dir(prefix: &str) -> PathBuf {
+    let temp_dir = std::env::temp_dir();
+    let process_id = std::process::id();
+
+    loop {
+        let unique = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let path = temp_dir.join(format!("{prefix}_{process_id}_{unique}"));
+
+        match fs::create_dir(&path) {
+            Ok(()) => return path,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => panic!("should create temp directory {}: {error}", path.display()),
+        }
+    }
+}
+
+fn unique_temp_file(prefix: &str, extension: &str) -> PathBuf {
+    unique_temp_dir(prefix).join(format!("fixture{extension}"))
 }
 
 fn tiny_png_bytes() -> &'static [u8] {
@@ -140,7 +154,7 @@ fn build_minimal_pmx_bytes(texture_paths: &[&str]) -> Vec<u8> {
 }
 
 fn write_zip(entries: Vec<(&str, &[u8])>) -> PathBuf {
-    let zip_path = unique_temp_path("bevy_pmx_zip_support", ".zip");
+    let zip_path = unique_temp_file("bevy_pmx_zip_support", ".zip");
     let file = fs::File::create(&zip_path).expect("should create zip fixture");
     let mut writer = ZipWriter::new(file);
 
@@ -278,7 +292,7 @@ fn zip_archive_pmx_and_textures_round_trip_through_the_source_abstraction() {
 
 #[test]
 fn folder_source_regression_still_loads_texture_bytes_from_disk() {
-    let temp_root = unique_temp_path("bevy_pmx_folder_source", "");
+    let temp_root = unique_temp_dir("bevy_pmx_folder_source");
     let model_root = temp_root.join("model");
     let texture_root = model_root.join("Texture");
     fs::create_dir_all(&texture_root).expect("should create texture directory");
