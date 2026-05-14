@@ -22,14 +22,13 @@ pub struct PmxLoaderSettings {
     pub load_materials: bool,
     /// Materializes a Bevy `Mesh` subasset and stores its handle on `Pmx::mesh_handle`.
     pub load_meshes: bool,
-    /// Reserved for later stages. Currently a no-op because stage 1 does not build bone
-    /// runtime assets.
+    /// Materializes PMX bone subassets and stores their handles on `Pmx::bone_handles`.
     pub load_bones: bool,
-    /// Reserved for later stages. Currently a no-op because stage 1 does not build morph
-    /// runtime assets.
+    /// Reserved for later stages. Currently a no-op because morph runtime assets are not built
+    /// yet.
     pub load_morphs: bool,
-    /// Reserved for later stages. Currently a no-op because stage 1 does not build physics
-    /// runtime assets.
+    /// Reserved for later stages. Currently a no-op because physics runtime assets are not built
+    /// yet.
     pub load_physics: bool,
     /// Retains the original parsed PMX document in `Pmx::raw_document`.
     pub keep_raw_document: bool,
@@ -131,6 +130,19 @@ impl AssetLoader for PmxLoader {
             }
 
             model = model.with_material_handles(material_handles);
+        }
+
+        if self.settings.load_bones {
+            let bone_records = model.bone_records.clone();
+            let mut bone_handles = Vec::with_capacity(bone_records.len());
+
+            for (bone_index, record) in bone_records.iter().enumerate() {
+                let bone_handle = load_context
+                    .add_labeled_asset(PmxAssetLabel::Bone(bone_index).to_string(), record.clone());
+                bone_handles.push(bone_handle);
+            }
+
+            model = model.with_bone_handles(bone_handles);
         }
 
         if self.settings.load_meshes {

@@ -265,7 +265,11 @@ fn log_scene_summary(scene: &ViewerScene) {
             );
         }
     }
-    info!("Bones: {}", scene.model.bones().len());
+    info!(
+        "Bones: {} ({} roots)",
+        scene.model.bone_records().len(),
+        scene.model.root_bones().count()
+    );
 }
 
 fn build_window_title(path: &Path, model: &Pmx) -> String {

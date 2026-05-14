@@ -7,6 +7,7 @@ use bevy::{
 };
 
 use crate::{
+    bone::PmxBoneRecord,
     format::{PmxBone, PmxDocument, PmxMaterial},
     resolver::PmxResolvedPath,
 };
@@ -183,9 +184,9 @@ mod tests {
 /// Root PMX asset produced by the loader.
 ///
 /// `raw_document` is present only when `keep_raw_document` is enabled. `geometry`,
-/// `primitives`, and `material_records` are always kept so the model can be rendered or
-/// re-materialized later, and `mesh_handle` / `material_handles` are filled when the loader
-/// materializes Bevy subassets.
+/// `primitives`, `material_records`, and `bone_records` are always kept so the model can be
+/// rendered or re-materialized later, and `mesh_handle` / `material_handles` /
+/// `bone_handles` are filled when the loader materializes Bevy subassets.
 #[derive(Debug, Clone, PartialEq, Asset, TypePath)]
 pub struct Pmx {
     pub raw_document: Option<PmxDocument>,
@@ -196,6 +197,10 @@ pub struct Pmx {
     pub material_records: Vec<PmxMaterialRecord>,
     /// PMX material subasset handles in the same order as `material_records`.
     pub material_handles: Vec<Handle<PmxMaterialAsset>>,
+    /// Imported PMX bone records kept so the loader can materialize subassets.
+    pub bone_records: Vec<PmxBoneRecord>,
+    /// PMX bone subasset handles in the same order as `bone_records`.
+    pub bone_handles: Vec<Handle<PmxBoneRecord>>,
     pub mesh_handle: Option<Handle<Mesh>>,
     pub primitives: Vec<PmxPrimitive>,
 }
@@ -209,6 +214,8 @@ impl Default for Pmx {
             texture_paths: Vec::new(),
             material_records: Vec::new(),
             material_handles: Vec::new(),
+            bone_records: Vec::new(),
+            bone_handles: Vec::new(),
             mesh_handle: None,
             primitives: Vec::new(),
         }
@@ -228,6 +235,8 @@ impl Pmx {
             texture_paths: Vec::new(),
             material_records: Vec::new(),
             material_handles: Vec::new(),
+            bone_records: Vec::new(),
+            bone_handles: Vec::new(),
             mesh_handle: None,
             primitives,
         }
@@ -248,6 +257,16 @@ impl Pmx {
         material_handles: Vec<Handle<PmxMaterialAsset>>,
     ) -> Self {
         self.material_handles = material_handles;
+        self
+    }
+
+    pub fn with_bone_records(mut self, bone_records: Vec<PmxBoneRecord>) -> Self {
+        self.bone_records = bone_records;
+        self
+    }
+
+    pub fn with_bone_handles(mut self, bone_handles: Vec<Handle<PmxBoneRecord>>) -> Self {
+        self.bone_handles = bone_handles;
         self
     }
 
@@ -289,6 +308,14 @@ impl Pmx {
         &self.material_handles
     }
 
+    pub fn bone_records(&self) -> &[PmxBoneRecord] {
+        &self.bone_records
+    }
+
+    pub fn bone_handles(&self) -> &[Handle<PmxBoneRecord>] {
+        &self.bone_handles
+    }
+
     pub fn mesh_handle(&self) -> Option<&Handle<Mesh>> {
         self.mesh_handle.as_ref()
     }
@@ -297,6 +324,11 @@ impl Pmx {
         &self.primitives
     }
 
+    pub fn root_bones(&self) -> impl Iterator<Item = &PmxBoneRecord> + '_ {
+        self.bone_records.iter().filter(|bone| bone.is_root())
+    }
+
+    /// Raw bone definitions from `raw_document`, if the raw document is still retained.
     pub fn bones(&self) -> &[PmxBone] {
         self.raw_document
             .as_ref()

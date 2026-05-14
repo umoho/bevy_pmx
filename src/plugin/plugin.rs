@@ -5,6 +5,7 @@ use bevy::{
 
 use crate::{
     asset::{Pmx, PmxMaterialAsset},
+    bone::PmxBoneRecord,
     loader::{PmxLoader, PmxLoaderSettings},
 };
 
@@ -35,6 +36,7 @@ impl Plugin for PmxPlugin {
     fn build(&self, app: &mut App) {
         app.init_asset::<Pmx>();
         app.init_asset::<PmxMaterialAsset>();
+        app.init_asset::<PmxBoneRecord>();
         app.insert_resource(self.settings.clone());
         app.init_asset_loader::<PmxLoader>();
     }

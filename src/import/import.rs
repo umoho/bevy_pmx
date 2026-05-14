@@ -1,5 +1,6 @@
 use crate::{
     asset::{Pmx, PmxMaterialRecord, PmxMeshGeometry, PmxPrimitive},
+    bone::PmxBoneRecord,
     format::{PmxDocument, PmxMaterial},
     resolver::{PmxResolvedPath, PmxResolver, PmxResolverSettings},
     source::PmxSource,
@@ -46,11 +47,13 @@ pub fn import_pmx(document: PmxDocument, context: &PmxImportContext) -> PmxImpor
     let geometry = PmxMeshGeometry::from_document(&document);
     let primitives = build_primitives(&document.materials);
     let material_records = build_material_records(&document.materials);
+    let bone_records = PmxBoneRecord::from_document(&document.bones);
     let raw_document = context.keep_raw_document.then(|| document.clone());
 
     let model = Pmx::new(raw_document, geometry, primitives)
         .with_texture_paths(resolved_textures)
-        .with_material_records(material_records);
+        .with_material_records(material_records)
+        .with_bone_records(bone_records);
 
     PmxImportResult { model }
 }
@@ -97,8 +100,8 @@ mod tests {
     use super::{PmxImportContext, PmxMeshGeometry, import_pmx};
     use crate::{
         format::{
-            PmxBone, PmxDocument, PmxHeader, PmxMaterial, PmxMaterialFlags, PmxSphereMode,
-            PmxTexture, PmxVertex, PmxVertexWeight,
+            PmxBone, PmxBoneFlags, PmxBoneTail, PmxDocument, PmxHeader, PmxMaterial,
+            PmxMaterialFlags, PmxSphereMode, PmxTexture, PmxVertex, PmxVertexWeight,
         },
         source::PmxSource,
     };
@@ -154,7 +157,36 @@ mod tests {
                 comment: String::new(),
                 surface_count: 3,
             }],
-            bones: Vec::<PmxBone>::new(),
+            bones: vec![
+                PmxBone {
+                    name: "root".to_owned(),
+                    name_english: "root".to_owned(),
+                    position: [0.0, 0.0, 0.0],
+                    parent_bone: -1,
+                    layer: 0,
+                    flags: PmxBoneFlags::default(),
+                    tail: PmxBoneTail::Offset([0.0, 1.0, 0.0]),
+                    inheritance: None,
+                    fixed_axis: None,
+                    local_axes: None,
+                    external_parent: -1,
+                    ik: None,
+                },
+                PmxBone {
+                    name: "child".to_owned(),
+                    name_english: "child".to_owned(),
+                    position: [0.0, 1.0, 0.0],
+                    parent_bone: 0,
+                    layer: 0,
+                    flags: PmxBoneFlags::default(),
+                    tail: PmxBoneTail::Offset([0.0, 1.0, 0.0]),
+                    inheritance: None,
+                    fixed_axis: None,
+                    local_axes: None,
+                    external_parent: -1,
+                    ik: None,
+                },
+            ],
             morphs: Vec::new(),
             display_frames: Vec::new(),
             rigid_bodies: Vec::new(),
@@ -201,11 +233,18 @@ mod tests {
         assert_eq!(kept.model.primitives[0].index_count, 3);
         assert_eq!(kept.model.primitives[0].material_index, 0);
         assert_eq!(kept.model.texture_paths.len(), 1);
+        assert_eq!(kept.model.bone_records().len(), 2);
+        assert_eq!(kept.model.bone_records()[0].children, vec![1]);
+        assert_eq!(kept.model.bone_records()[1].parent_index, Some(0));
+        assert_eq!(kept.model.root_bones().count(), 1);
 
         let dropped = import_pmx(document, &drop_context);
         assert!(dropped.model.raw_document().is_none());
         assert_eq!(dropped.model.geometry.indices, vec![0, 1, 2]);
         assert_eq!(dropped.model.material_records.len(), 1);
+        assert_eq!(dropped.model.bone_records().len(), 2);
+        assert_eq!(dropped.model.bone_records()[0].children, vec![1]);
+        assert_eq!(dropped.model.root_bones().count(), 1);
     }
 
     #[test]

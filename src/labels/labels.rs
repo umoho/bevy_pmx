@@ -39,4 +39,9 @@ mod tests {
     fn material_labels_match_the_actual_material_subasset_name() {
         assert_eq!(PmxAssetLabel::Material(7).to_string(), "Material/7");
     }
+
+    #[test]
+    fn bone_labels_match_the_actual_bone_subasset_name() {
+        assert_eq!(PmxAssetLabel::Bone(7).to_string(), "Bone/7");
+    }
 }
