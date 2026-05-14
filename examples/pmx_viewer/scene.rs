@@ -12,6 +12,7 @@ use bevy::{
     window::PrimaryWindow,
 };
 use bevy_pmx::prelude::*;
+use zip::ZipArchive;
 
 use crate::{gizmos, orbit};
 
@@ -119,15 +120,19 @@ pub(crate) fn bootstrap_scene(
 }
 
 fn load_scene(path: &Path) -> Result<(LoadedScene, Vec<DecodedTexture>), Box<dyn Error>> {
-    let bytes = fs::read(path).map_err(|error| {
+    let (source, model_location) = source_for_scene(path)?;
+    let bytes = source.read_bytes(&model_location).map_err(|error| {
         io::Error::new(
             error.kind(),
-            format!("failed to read PMX file {}: {error}", path.display()),
+            format!(
+                "failed to read PMX file {} (resolved to {}): {error}",
+                path.display(),
+                model_location
+            ),
         )
     })?;
     let document = parse_pmx(&bytes)?;
-    let source_root = path.parent().unwrap_or_else(|| Path::new("."));
-    let context = PmxImportContext::with_source(PmxSource::folder(source_root));
+    let context = PmxImportContext::with_source(source.clone());
     let model = import_pmx(document, &context).model;
 
     if model.geometry().positions.is_empty() {
@@ -138,7 +143,7 @@ fn load_scene(path: &Path) -> Result<(LoadedScene, Vec<DecodedTexture>), Box<dyn
         .into());
     }
 
-    let textures = load_textures(model.texture_paths());
+    let textures = load_textures(&source, model.texture_paths());
     let (bounds_min, bounds_max) = bounds_for_model(&model);
     let bounds_center = (bounds_min + bounds_max) * 0.5;
     let bounds_radius = ((bounds_max - bounds_min) * 0.5).length().max(1.0);
@@ -156,6 +161,92 @@ fn load_scene(path: &Path) -> Result<(LoadedScene, Vec<DecodedTexture>), Box<dyn
         },
         textures,
     ))
+}
+
+fn source_for_scene(path: &Path) -> Result<(PmxSource, PmxSourceLocation), Box<dyn Error>> {
+    if is_zip_archive(path) {
+        let (entry, root) = discover_zip_pmx_entry(path)?.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("zip archive {} does not contain a PMX file", path.display()),
+            )
+        })?;
+        let source = PmxSource::zip_with_encoding(path, root, ZipNameEncoding::Auto);
+        let location = PmxSourceLocation::zip(path.to_path_buf(), entry);
+        return Ok((source, location));
+    }
+
+    let source = PmxSource::folder(path.parent().unwrap_or_else(|| Path::new(".")));
+    let location = PmxSourceLocation::disk(path.to_path_buf());
+    Ok((source, location))
+}
+
+fn is_zip_archive(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
+}
+
+fn discover_zip_pmx_entry(path: &Path) -> Result<Option<(String, PathBuf)>, io::Error> {
+    let file = fs::File::open(path)?;
+    let mut archive = ZipArchive::new(file).map_err(zip_error_to_io)?;
+
+    for index in 0..archive.len() {
+        let file = archive.by_index_raw(index).map_err(zip_error_to_io)?;
+        if file.is_dir() {
+            continue;
+        }
+
+        let Some(decoded_name) = ZipNameEncoding::Auto
+            .decode_name(file.name_raw())
+            .map(|name| name.into_owned())
+        else {
+            continue;
+        };
+
+        let Some(entry) = normalize_zip_entry_name(&decoded_name) else {
+            continue;
+        };
+
+        let is_pmx = Path::new(&entry)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("pmx"));
+        if !is_pmx {
+            continue;
+        }
+
+        let root = Path::new(&entry)
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        return Ok(Some((entry, root)));
+    }
+
+    Ok(None)
+}
+
+fn normalize_zip_entry_name(value: &str) -> Option<String> {
+    let mut components = Vec::new();
+    let normalized = value.replace('\\', "/");
+
+    for part in normalized.split('/') {
+        match part {
+            "" | "." => {}
+            "__MACOSX" => return None,
+            part if part.starts_with("._") => return None,
+            ".." => {
+                components.pop()?;
+            }
+            part => components.push(part),
+        }
+    }
+
+    Some(components.join("/"))
+}
+
+fn zip_error_to_io(error: zip::result::ZipError) -> io::Error {
+    io::Error::other(error)
 }
 
 fn spawn_scene_entities(
@@ -357,11 +448,11 @@ fn material_for_record(
     }
 }
 
-fn load_textures(paths: &[PmxResolvedPath]) -> Vec<DecodedTexture> {
+fn load_textures(source: &PmxSource, paths: &[PmxResolvedPath]) -> Vec<DecodedTexture> {
     let mut textures = Vec::with_capacity(paths.len());
 
     for path in paths {
-        match load_texture(path) {
+        match load_texture(source, path) {
             Ok((image, has_alpha)) => textures.push(DecodedTexture {
                 path: path.clone(),
                 image,
@@ -388,39 +479,26 @@ fn load_textures(paths: &[PmxResolvedPath]) -> Vec<DecodedTexture> {
     textures
 }
 
-fn load_texture(path: &PmxResolvedPath) -> Result<(Image, bool), io::Error> {
-    let Some(disk_path) = path.location().as_disk_path() else {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("texture {} is not a disk path", path.location()),
-        ));
-    };
-
-    let bytes = fs::read(disk_path).map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!(
-                "failed to read texture {} (resolved to {})",
-                path.original,
-                path.location()
-            ),
-        )
+fn load_texture(source: &PmxSource, path: &PmxResolvedPath) -> Result<(Image, bool), io::Error> {
+    let location = path.location();
+    let bytes = source.read_bytes(location).map_err(|error| {
+        io::Error::other(format!(
+            "failed to read texture {} (resolved to {}) through the source abstraction: {error}",
+            path.original, location,
+        ))
     })?;
-    let image = decode_texture(disk_path, &bytes)?;
+    let image = decode_texture(location, &bytes)?;
     let has_alpha = image_has_alpha(&image);
     Ok((image, has_alpha))
 }
 
-fn decode_texture(path: &Path, bytes: &[u8]) -> Result<Image, io::Error> {
-    let extension = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("texture {} does not have a file extension", path.display()),
-            )
-        })?;
+fn decode_texture(location: &PmxSourceLocation, bytes: &[u8]) -> Result<Image, io::Error> {
+    let extension = location.extension().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("texture {location} does not have a file extension"),
+        )
+    })?;
 
     let extension = extension.to_ascii_lowercase();
     let image_type = ImageType::Extension(extension.as_str());
@@ -435,7 +513,7 @@ fn decode_texture(path: &Path, bytes: &[u8]) -> Result<Image, io::Error> {
     .map_err(|error| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("failed to decode texture {}: {error}", path.display()),
+            format!("failed to decode texture {location}: {error}"),
         )
     })
 }
@@ -503,4 +581,176 @@ fn bounds_for_model(model: &Pmx) -> (Vec3, Vec3) {
     }
 
     (bounds.min, bounds.max)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{load_scene, load_texture};
+    use bevy_pmx::prelude::*;
+    use std::{
+        fs,
+        io::Write,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+    use zip::{ZipWriter, write::SimpleFileOptions};
+
+    fn unique_temp_path(prefix: &str, extension: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic")
+            .as_nanos();
+        std::env::temp_dir().join(format!("{prefix}_{unique}{extension}"))
+    }
+
+    fn push_u8(bytes: &mut Vec<u8>, value: u8) {
+        bytes.push(value);
+    }
+
+    fn push_i32(bytes: &mut Vec<u8>, value: i32) {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn push_u32(bytes: &mut Vec<u8>, value: u32) {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn push_f32(bytes: &mut Vec<u8>, value: f32) {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn push_text(bytes: &mut Vec<u8>, value: &str) {
+        push_i32(bytes, value.len() as i32);
+        bytes.extend_from_slice(value.as_bytes());
+    }
+
+    fn push_vec2(bytes: &mut Vec<u8>, value: [f32; 2]) {
+        push_f32(bytes, value[0]);
+        push_f32(bytes, value[1]);
+    }
+
+    fn push_vec3(bytes: &mut Vec<u8>, value: [f32; 3]) {
+        push_f32(bytes, value[0]);
+        push_f32(bytes, value[1]);
+        push_f32(bytes, value[2]);
+    }
+
+    fn push_vec4(bytes: &mut Vec<u8>, value: [f32; 4]) {
+        push_f32(bytes, value[0]);
+        push_f32(bytes, value[1]);
+        push_f32(bytes, value[2]);
+        push_f32(bytes, value[3]);
+    }
+
+    fn push_vertex(bytes: &mut Vec<u8>, position: [f32; 3], uv: [f32; 2]) {
+        push_vec3(bytes, position);
+        push_vec3(bytes, [0.0, 0.0, 1.0]);
+        push_vec2(bytes, uv);
+        push_u8(bytes, 0);
+        push_i32(bytes, -1);
+        push_f32(bytes, 1.0);
+    }
+
+    fn push_material(bytes: &mut Vec<u8>, texture_index: i32) {
+        push_text(bytes, "material");
+        push_text(bytes, "material");
+        push_vec4(bytes, [1.0, 1.0, 1.0, 1.0]);
+        push_vec3(bytes, [0.0, 0.0, 0.0]);
+        push_f32(bytes, 1.0);
+        push_vec3(bytes, [0.0, 0.0, 0.0]);
+        push_u8(bytes, 0);
+        push_vec4(bytes, [0.0, 0.0, 0.0, 0.0]);
+        push_f32(bytes, 1.0);
+        push_i32(bytes, texture_index);
+        push_i32(bytes, -1);
+        push_u8(bytes, 0);
+        push_u8(bytes, 0);
+        push_i32(bytes, -1);
+        push_text(bytes, "");
+        push_i32(bytes, 3);
+    }
+
+    fn build_minimal_pmx_bytes(texture_path: &str) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"PMX ");
+        push_f32(&mut bytes, 2.0);
+        push_u8(&mut bytes, 8);
+        push_u8(&mut bytes, 1);
+        push_u8(&mut bytes, 0);
+        bytes.extend_from_slice(&[4, 4, 4, 4, 4, 4]);
+        push_text(&mut bytes, "zip viewer sample");
+        push_text(&mut bytes, "zip viewer sample");
+        push_text(&mut bytes, "");
+        push_text(&mut bytes, "");
+
+        push_i32(&mut bytes, 3);
+        push_vertex(&mut bytes, [0.0, 0.0, 0.0], [0.0, 0.0]);
+        push_vertex(&mut bytes, [1.0, 0.0, 0.0], [1.0, 0.0]);
+        push_vertex(&mut bytes, [0.0, 1.0, 0.0], [0.0, 1.0]);
+
+        push_i32(&mut bytes, 3);
+        push_u32(&mut bytes, 0);
+        push_u32(&mut bytes, 1);
+        push_u32(&mut bytes, 2);
+
+        push_i32(&mut bytes, 1);
+        push_text(&mut bytes, texture_path);
+
+        push_i32(&mut bytes, 1);
+        push_material(&mut bytes, 0);
+
+        push_i32(&mut bytes, 0);
+        push_i32(&mut bytes, 0);
+        push_i32(&mut bytes, 0);
+        push_i32(&mut bytes, 0);
+        push_i32(&mut bytes, 0);
+
+        bytes
+    }
+
+    fn tiny_png_bytes() -> &'static [u8] {
+        &[
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0B, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9C, 0x63, 0xF8, 0x0F, 0x04, 0x00, 0x09, 0xFB, 0x03, 0xFD, 0xFB, 0x5E, 0x6B, 0x2B,
+            0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ]
+    }
+
+    fn write_zip(entries: Vec<(&str, &[u8])>) -> PathBuf {
+        let zip_path = unique_temp_path("bevy_pmx_viewer", ".zip");
+        let file = fs::File::create(&zip_path).expect("should create zip fixture");
+        let mut writer = ZipWriter::new(file);
+
+        for (name, bytes) in entries {
+            writer
+                .start_file(name, SimpleFileOptions::default())
+                .expect("should add zip entry");
+            writer.write_all(bytes).expect("should write zip entry");
+        }
+
+        writer.finish().expect("should finish zip archive");
+        zip_path
+    }
+
+    #[test]
+    fn load_scene_can_open_zip_archives() {
+        let texture_bytes = tiny_png_bytes();
+        let pmx_bytes = build_minimal_pmx_bytes("Texture/face.png");
+        let zip_path = write_zip(vec![
+            ("Model/model.pmx", pmx_bytes.as_slice()),
+            ("Model/Texture/face.png", texture_bytes),
+        ]);
+
+        let (scene, textures) = load_scene(&zip_path).expect("zip archive should load");
+        let source = PmxSource::zip_with_encoding(&zip_path, "Model", ZipNameEncoding::Auto);
+        let loaded_texture = load_texture(&source, &scene.model.texture_paths[0])
+            .expect("zip texture should load through the source abstraction");
+
+        assert_eq!(scene.model.texture_paths.len(), 1);
+        assert_eq!(textures.len(), 1);
+        assert_eq!(textures[0].fallback, false);
+        assert_eq!(loaded_texture.1, textures[0].has_alpha);
+    }
 }

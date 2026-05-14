@@ -22,12 +22,13 @@ fn unique_temp_path(prefix: &str, extension: &str) -> PathBuf {
     std::env::temp_dir().join(format!("{prefix}_{unique}{extension}"))
 }
 
-fn tiny_bmp_bytes() -> &'static [u8] {
+fn tiny_png_bytes() -> &'static [u8] {
     &[
-        0x42, 0x4D, 0x3A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x36, 0x00, 0x00, 0x00, 0x28,
-        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x18, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x13, 0x0B, 0x00, 0x00, 0x13, 0x0B, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0x00,
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0B, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8,
+        0x0F, 0x04, 0x00, 0x09, 0xFB, 0x03, 0xFD, 0xFB, 0x5E, 0x6B, 0x2B, 0x00, 0x00, 0x00, 0x00,
+        0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ]
 }
 
@@ -244,10 +245,11 @@ fn explicit_zip_name_encoding_does_not_guess_other_encodings() {
 
 #[test]
 fn zip_archive_pmx_and_textures_round_trip_through_the_source_abstraction() {
-    let pmx_bytes = build_minimal_pmx_bytes(&["texture/valid.bmp"]);
+    let texture_bytes = tiny_png_bytes();
+    let pmx_bytes = build_minimal_pmx_bytes(&["texture/valid.png"]);
     let zip_path = write_zip(vec![
         ("Model/model.pmx", pmx_bytes.as_slice()),
-        ("Model/Texture/Valid.BMP", tiny_bmp_bytes()),
+        ("Model/Texture/Valid.PNG", texture_bytes),
     ]);
     let source = PmxSource::zip_with_encoding(zip_path.clone(), "Model", ZipNameEncoding::Auto);
     let model = import_model(&source, "model.pmx");
@@ -256,11 +258,11 @@ fn zip_archive_pmx_and_textures_round_trip_through_the_source_abstraction() {
     let texture = &model.texture_paths[0];
     assert_eq!(
         texture.resolved_path(),
-        Path::new("Model/Texture/Valid.BMP")
+        Path::new("Model/Texture/Valid.PNG")
     );
     assert_eq!(
         texture.location(),
-        &PmxSourceLocation::zip(zip_path.clone(), "Model/Texture/Valid.BMP")
+        &PmxSourceLocation::zip(zip_path.clone(), "Model/Texture/Valid.PNG")
     );
     assert!(source.contains_location(texture.location()));
 
@@ -280,14 +282,15 @@ fn folder_source_regression_still_loads_texture_bytes_from_disk() {
     let model_root = temp_root.join("model");
     let texture_root = model_root.join("Texture");
     fs::create_dir_all(&texture_root).expect("should create texture directory");
-    fs::write(texture_root.join("Face.BMP"), tiny_bmp_bytes()).expect("should create texture file");
+    let texture_bytes = tiny_png_bytes();
+    fs::write(texture_root.join("Face.PNG"), texture_bytes).expect("should create texture file");
     let pmx_path = model_root.join("model.pmx");
-    let pmx_bytes = build_minimal_pmx_bytes(&["Texture/Face.BMP"]);
+    let pmx_bytes = build_minimal_pmx_bytes(&["Texture/Face.PNG"]);
     fs::write(&pmx_path, pmx_bytes).expect("should create PMX file");
 
     let source = PmxSource::folder(&model_root);
     let model = import_model(&source, "model.pmx");
-    let expected_texture_path = texture_root.join("Face.BMP");
+    let expected_texture_path = texture_root.join("Face.PNG");
 
     assert_eq!(model.texture_paths.len(), 1);
     let texture = &model.texture_paths[0];
@@ -304,7 +307,7 @@ fn folder_source_regression_still_loads_texture_bytes_from_disk() {
                 .expect("disk texture path")
         )
         .expect("resolved path should canonicalize"),
-        fs::canonicalize(texture_root.join("Face.BMP"))
+        fs::canonicalize(texture_root.join("Face.PNG"))
             .expect("expected texture path should canonicalize")
     );
 
@@ -321,14 +324,15 @@ fn folder_source_regression_still_loads_texture_bytes_from_disk() {
 #[test]
 fn missing_or_bad_zip_resources_fall_back_to_placeholder_images() {
     let pmx_bytes = build_minimal_pmx_bytes(&[
-        "texture/valid.bmp",
-        "texture/bad.bmp",
-        "texture/missing.bmp",
+        "texture/valid.png",
+        "texture/bad.png",
+        "texture/missing.png",
     ]);
+    let texture_bytes = tiny_png_bytes();
     let zip_path = write_zip(vec![
         ("Model/model.pmx", pmx_bytes.as_slice()),
-        ("Model/Texture/Valid.BMP", tiny_bmp_bytes()),
-        ("Model/Texture/Bad.BMP", b"not an image"),
+        ("Model/Texture/Valid.PNG", texture_bytes),
+        ("Model/Texture/Bad.PNG", b"not an image"),
     ]);
     let source = PmxSource::zip_with_encoding(zip_path, "Model", ZipNameEncoding::Auto);
     let model = import_model(&source, "model.pmx");
