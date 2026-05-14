@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     fmt, fs,
-    io::{self, Read},
+    io::{self, Cursor, Read},
     path::{Component, Path, PathBuf},
 };
 
@@ -488,6 +488,39 @@ fn find_zip_entry(
     Ok(case_match)
 }
 
+pub(crate) fn find_first_pmx_zip_entry_root(
+    archive_bytes: &[u8],
+    encoding: ZipNameEncoding,
+) -> io::Result<Option<(usize, String, String)>> {
+    let cursor = Cursor::new(archive_bytes);
+    let mut archive = ZipArchive::new(cursor).map_err(zip_error_to_io)?;
+
+    for index in 0..archive.len() {
+        let file = archive.by_index_raw(index).map_err(zip_error_to_io)?;
+        if file.is_dir() || is_zip_noise_entry(file.name_raw()) {
+            continue;
+        }
+
+        for candidate in decode_zip_entry_candidates(&file, encoding) {
+            let Some(candidate) = normalize_zip_entry_name(&candidate) else {
+                continue;
+            };
+
+            if is_pmx_entry_name(&candidate) {
+                let root = Path::new(&candidate)
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                return Ok(Some((index, candidate, root)));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 fn decode_zip_entry_candidates<R: Read + ?Sized>(
     file: &ZipFile<'_, R>,
     encoding: ZipNameEncoding,
@@ -601,6 +634,13 @@ fn is_zip_noise_entry(name_raw: &[u8]) -> bool {
     };
     name.split(['/', '\\'])
         .any(|part| part == "__MACOSX" || part.starts_with("._"))
+}
+
+fn is_pmx_entry_name(entry: &str) -> bool {
+    Path::new(entry)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("pmx"))
 }
 
 fn zip_error_to_io(error: zip::result::ZipError) -> io::Error {

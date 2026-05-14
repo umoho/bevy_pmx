@@ -7,9 +7,10 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 use std::{
-    io,
+    io::{self, Cursor, Read},
     path::{Path, PathBuf},
 };
+use zip::ZipArchive;
 
 use crate::{
     asset::{Pmx, PmxMaterialAsset},
@@ -18,7 +19,7 @@ use crate::{
     import::{PmxImportContext, import_pmx},
     labels::PmxAssetLabel,
     resolver::{PmxResolvedPath, PmxResolverSettings},
-    source::{PmxSource, PmxSourceLocation},
+    source::{PmxSource, PmxSourceLocation, ZipNameEncoding, find_first_pmx_zip_entry_root},
 };
 
 #[derive(Debug, Clone, Resource, PartialEq, Eq)]
@@ -37,6 +38,8 @@ pub struct PmxLoaderSettings {
     pub load_physics: bool,
     /// Retains the original parsed PMX document in `Pmx::raw_document`.
     pub keep_raw_document: bool,
+    /// Decoding strategy for ZIP entry names when loading `.zip` archives.
+    pub zip_name_encoding: ZipNameEncoding,
     pub resolver: PmxResolverSettings,
 }
 
@@ -50,6 +53,7 @@ impl Default for PmxLoaderSettings {
             load_morphs: true,
             load_physics: true,
             keep_raw_document: true,
+            zip_name_encoding: ZipNameEncoding::Auto,
             resolver: PmxResolverSettings::default(),
         }
     }
@@ -99,9 +103,21 @@ impl AssetLoader for PmxLoader {
     ) -> PmxResult<Self::Asset> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
-        let document = PmxDocument::from_bytes(&bytes)?;
 
-        let source = source_for_load_context(load_context);
+        let asset_path = load_context.path().path();
+        let (document, source) = if is_zip_asset(asset_path) {
+            load_zip_document(
+                &archive_path_for_load_context(load_context),
+                &bytes,
+                self.settings.zip_name_encoding,
+            )?
+        } else {
+            (
+                PmxDocument::from_bytes(&bytes)?,
+                source_for_load_context(load_context),
+            )
+        };
+
         let import_context = PmxImportContext {
             source: Some(source.clone()),
             resolver: self.settings.resolver.clone(),
@@ -189,7 +205,7 @@ impl AssetLoader for PmxLoader {
     }
 
     fn extensions(&self) -> &[&str] {
-        &["pmx"]
+        &["pmx", "zip"]
     }
 }
 
@@ -223,6 +239,17 @@ fn zip_source_for_load_context(load_context: &LoadContext<'_>) -> Option<PmxSour
     Some(PmxSource::zip(archive, root))
 }
 
+fn archive_path_for_load_context(load_context: &LoadContext<'_>) -> PathBuf {
+    source_root_for_load_context(load_context)
+        .join(load_context.path().path().file_name().unwrap_or_default())
+}
+
+fn is_zip_asset(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
+}
+
 fn split_zip_asset_path(path: &Path) -> Option<(PathBuf, PathBuf)> {
     let mut archive = PathBuf::new();
     let mut entry = PathBuf::new();
@@ -250,6 +277,31 @@ fn split_zip_asset_path(path: &Path) -> Option<(PathBuf, PathBuf)> {
     } else {
         None
     }
+}
+
+fn load_zip_document(
+    archive_path: &Path,
+    archive_bytes: &[u8],
+    name_encoding: ZipNameEncoding,
+) -> PmxResult<(PmxDocument, PmxSource)> {
+    let (index, _entry, root) = find_first_pmx_zip_entry_root(archive_bytes, name_encoding)?
+        .ok_or(PmxError::InvalidFormat(
+            "zip archive does not contain a PMX file",
+        ))?;
+    let source = PmxSource::zip_with_encoding(archive_path.to_path_buf(), root, name_encoding);
+
+    let pmx_bytes = read_zip_entry_bytes(archive_bytes, index)?;
+    let document = PmxDocument::from_bytes(&pmx_bytes)?;
+    Ok((document, source))
+}
+
+fn read_zip_entry_bytes(archive_bytes: &[u8], index: usize) -> io::Result<Vec<u8>> {
+    let cursor = Cursor::new(archive_bytes);
+    let mut archive = ZipArchive::new(cursor).map_err(zip_error_to_io)?;
+    let mut file = archive.by_index(index).map_err(zip_error_to_io)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 fn load_texture_image(source: &PmxSource, texture: &PmxResolvedPath) -> Result<Image, io::Error> {
@@ -287,6 +339,10 @@ fn decode_texture(location: &PmxSourceLocation, bytes: &[u8]) -> Result<Image, i
             format!("failed to decode texture {location}: {error}"),
         )
     })
+}
+
+fn zip_error_to_io(error: zip::result::ZipError) -> io::Error {
+    io::Error::other(error)
 }
 
 fn placeholder_texture_image() -> Image {

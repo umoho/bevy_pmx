@@ -1,7 +1,8 @@
 use bevy::{
     asset::RenderAssetUsages,
+    asset::{AssetPlugin, AssetServer, LoadState},
     image::{CompressedImageFormats, ImageSampler, ImageType},
-    prelude::Image,
+    prelude::{App, Assets, Image},
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 use bevy_pmx::prelude::*;
@@ -34,6 +35,13 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
 
 fn unique_temp_file(prefix: &str, extension: &str) -> PathBuf {
     unique_temp_dir(prefix).join(format!("fixture{extension}"))
+}
+
+fn unique_asset_root(prefix: &str) -> PathBuf {
+    let temp_dir = Path::new("assets");
+    let process_id = std::process::id();
+    let unique = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    temp_dir.join(format!("{prefix}_{process_id}_{unique}"))
 }
 
 fn tiny_png_bytes() -> &'static [u8] {
@@ -155,6 +163,15 @@ fn build_minimal_pmx_bytes(texture_paths: &[&str]) -> Vec<u8> {
 
 fn write_zip(entries: Vec<(&str, &[u8])>) -> PathBuf {
     let zip_path = unique_temp_file("bevy_pmx_zip_support", ".zip");
+    write_zip_at(&zip_path, entries);
+    zip_path
+}
+
+fn write_zip_at(zip_path: &Path, entries: Vec<(&str, &[u8])>) {
+    if let Some(parent) = zip_path.parent() {
+        fs::create_dir_all(parent).expect("should create zip parent directory");
+    }
+
     let file = fs::File::create(&zip_path).expect("should create zip fixture");
     let mut writer = ZipWriter::new(file);
 
@@ -166,7 +183,13 @@ fn write_zip(entries: Vec<(&str, &[u8])>) -> PathBuf {
     }
 
     writer.finish().expect("should finish zip archive");
-    zip_path
+}
+
+fn write_bytes(path: &Path, bytes: &[u8]) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("should create parent directory");
+    }
+    fs::write(path, bytes).expect("should write fixture bytes");
 }
 
 fn import_model(source: &PmxSource, model_entry: &str) -> Pmx {
@@ -238,6 +261,54 @@ fn is_placeholder_texture(image: &Image) -> bool {
         }
         && image.texture_descriptor.format == TextureFormat::Rgba8UnormSrgb
         && image.data.as_deref() == Some(&[255, 0, 255, 255])
+}
+
+fn build_test_app() -> App {
+    let mut app = App::new();
+    app.add_plugins((
+        bevy::MinimalPlugins,
+        AssetPlugin::default(),
+        bevy::image::ImagePlugin::default_nearest(),
+        PmxPlugin::with_settings(PmxLoaderSettings {
+            load_textures: true,
+            load_materials: false,
+            load_meshes: false,
+            load_bones: false,
+            load_morphs: false,
+            load_physics: false,
+            keep_raw_document: true,
+            resolver: Default::default(),
+            zip_name_encoding: ZipNameEncoding::Auto,
+        }),
+    ));
+    app
+}
+
+fn load_pmx_handle(app: &mut App, path: String) -> bevy::asset::Handle<Pmx> {
+    let asset_server = app.world().resource::<AssetServer>().clone();
+    asset_server.load(path)
+}
+
+fn wait_for_pmx_asset(app: &mut App, handle: &bevy::asset::Handle<Pmx>) {
+    let asset_server = app.world().resource::<AssetServer>().clone();
+
+    for _ in 0..64 {
+        let load_state = asset_server.load_state(handle.id());
+        if matches!(load_state, LoadState::Loaded)
+            && asset_server.is_loaded_with_dependencies(handle.id())
+        {
+            return;
+        }
+        if let LoadState::Failed(error) = load_state {
+            panic!("PMX asset failed to load: {error:?}");
+        }
+        app.update();
+    }
+
+    panic!(
+        "PMX asset did not finish loading; final load state was {:?}",
+        asset_server.load_state(handle.id())
+    );
 }
 
 #[test]
@@ -361,4 +432,128 @@ fn missing_or_bad_zip_resources_fall_back_to_placeholder_images() {
     assert!(!is_placeholder_texture(&images[0]));
     assert!(is_placeholder_texture(&images[1]));
     assert!(is_placeholder_texture(&images[2]));
+}
+
+#[test]
+fn asset_server_loads_zip_pmx_assets_from_archive_entries() {
+    let asset_root = unique_asset_root("bevy_pmx_loader_zip");
+    let zip_path = asset_root.join("character.zip");
+    let load_path = asset_root
+        .strip_prefix("assets")
+        .expect("asset path should live under assets")
+        .join("character.zip");
+    let pmx_bytes = build_minimal_pmx_bytes(&["Texture/Face.PNG"]);
+
+    write_zip_at(
+        &zip_path,
+        vec![
+            ("Package/model.pmx", pmx_bytes.as_slice()),
+            ("Package/Texture/Face.PNG", tiny_png_bytes()),
+        ],
+    );
+
+    let mut app = build_test_app();
+    let handle = load_pmx_handle(&mut app, load_path.to_string_lossy().into_owned());
+    wait_for_pmx_asset(&mut app, &handle);
+
+    let assets = app.world().resource::<Assets<Pmx>>();
+    let model = assets.get(&handle).expect("should load the PMX asset");
+    let images = app.world().resource::<Assets<Image>>();
+
+    assert_eq!(model.texture_paths.len(), 1);
+    assert_eq!(model.textures.len(), 1);
+    assert_eq!(
+        model.texture_paths[0].location(),
+        &PmxSourceLocation::zip(zip_path.clone(), "Package/Texture/Face.PNG")
+    );
+
+    let image = images
+        .get(&model.textures[0])
+        .expect("should load the texture subasset");
+
+    assert!(!is_placeholder_texture(image));
+
+    let _ = fs::remove_dir_all(&asset_root);
+}
+
+#[test]
+fn asset_server_loads_plain_pmx_files_without_regressing_folder_sources() {
+    let asset_root = unique_asset_root("bevy_pmx_loader_pmx");
+    let model_path = asset_root.join("model.pmx");
+    let texture_path = asset_root.join("Texture/Face.PNG");
+    let load_path = asset_root
+        .strip_prefix("assets")
+        .expect("asset path should live under assets")
+        .join("model.pmx");
+    let pmx_bytes = build_minimal_pmx_bytes(&["Texture/Face.PNG"]);
+
+    write_bytes(&model_path, &pmx_bytes);
+    write_bytes(&texture_path, tiny_png_bytes());
+
+    let mut app = build_test_app();
+    let handle = load_pmx_handle(&mut app, load_path.to_string_lossy().into_owned());
+    wait_for_pmx_asset(&mut app, &handle);
+
+    let assets = app.world().resource::<Assets<Pmx>>();
+    let model = assets.get(&handle).expect("should load the PMX asset");
+    let images = app.world().resource::<Assets<Image>>();
+
+    assert_eq!(model.texture_paths.len(), 1);
+    assert_eq!(
+        model.texture_paths[0].location(),
+        &PmxSourceLocation::disk(texture_path.clone())
+    );
+
+    let image = images
+        .get(&model.textures[0])
+        .expect("should load the texture subasset");
+
+    assert!(!is_placeholder_texture(image));
+
+    let _ = fs::remove_dir_all(&asset_root);
+}
+
+#[test]
+fn asset_server_uses_placeholders_for_missing_or_bad_zip_textures() {
+    let asset_root = unique_asset_root("bevy_pmx_loader_placeholder");
+    let zip_path = asset_root.join("character.zip");
+    let load_path = asset_root
+        .strip_prefix("assets")
+        .expect("asset path should live under assets")
+        .join("character.zip");
+    let pmx_bytes = build_minimal_pmx_bytes(&[
+        "Texture/Valid.PNG",
+        "Texture/Bad.PNG",
+        "Texture/Missing.PNG",
+    ]);
+
+    write_zip_at(
+        &zip_path,
+        vec![
+            ("Package/model.pmx", pmx_bytes.as_slice()),
+            ("Package/Texture/Valid.PNG", tiny_png_bytes()),
+            ("Package/Texture/Bad.PNG", b"not an image"),
+        ],
+    );
+
+    let mut app = build_test_app();
+    let handle = load_pmx_handle(&mut app, load_path.to_string_lossy().into_owned());
+    wait_for_pmx_asset(&mut app, &handle);
+
+    let assets = app.world().resource::<Assets<Pmx>>();
+    let model = assets.get(&handle).expect("should load the PMX asset");
+    let images = app.world().resource::<Assets<Image>>();
+
+    assert_eq!(model.texture_paths.len(), 3);
+    let loaded_images: Vec<&Image> = model
+        .textures
+        .iter()
+        .map(|handle| images.get(handle).expect("should load texture subasset"))
+        .collect();
+
+    assert!(!is_placeholder_texture(loaded_images[0]));
+    assert!(is_placeholder_texture(loaded_images[1]));
+    assert!(is_placeholder_texture(loaded_images[2]));
+
+    let _ = fs::remove_dir_all(&asset_root);
 }
