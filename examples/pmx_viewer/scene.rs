@@ -268,7 +268,7 @@ fn log_scene_summary(scene: &LoadedScene, textures: &[DecodedTexture]) {
             info!(
                 "  [{index}] {} -> {} (placeholder, {}x{})",
                 texture.path.original,
-                texture.path.resolved.display(),
+                texture.path.location(),
                 size.width,
                 size.height
             );
@@ -276,7 +276,7 @@ fn log_scene_summary(scene: &LoadedScene, textures: &[DecodedTexture]) {
             info!(
                 "  [{index}] {} -> {} ({}x{})",
                 texture.path.original,
-                texture.path.resolved.display(),
+                texture.path.location(),
                 size.width,
                 size.height
             );
@@ -372,7 +372,7 @@ fn load_textures(paths: &[PmxResolvedPath]) -> Vec<DecodedTexture> {
                 warn!(
                     "missing texture: {} (resolved to {}) - using magenta placeholder",
                     path.original,
-                    path.resolved_path().display()
+                    path.location()
                 );
                 warn!("  read error: {error}");
                 textures.push(DecodedTexture {
@@ -389,17 +389,24 @@ fn load_textures(paths: &[PmxResolvedPath]) -> Vec<DecodedTexture> {
 }
 
 fn load_texture(path: &PmxResolvedPath) -> Result<(Image, bool), io::Error> {
-    let bytes = fs::read(path.resolved_path()).map_err(|error| {
+    let Some(disk_path) = path.location().as_disk_path() else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("texture {} is not a disk path", path.location()),
+        ));
+    };
+
+    let bytes = fs::read(disk_path).map_err(|error| {
         io::Error::new(
             error.kind(),
             format!(
                 "failed to read texture {} (resolved to {})",
                 path.original,
-                path.resolved_path().display()
+                path.location()
             ),
         )
     })?;
-    let image = decode_texture(path.resolved_path(), &bytes)?;
+    let image = decode_texture(disk_path, &bytes)?;
     let has_alpha = image_has_alpha(&image);
     Ok((image, has_alpha))
 }

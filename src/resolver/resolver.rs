@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 
-use crate::source::{PmxFolderSource, PmxSource};
+use crate::source::{PmxFolderSource, PmxSource, PmxSourceLocation};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PmxResolvedPath {
     pub original: String,
-    pub resolved: PathBuf,
+    pub location: PmxSourceLocation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,10 +46,10 @@ impl PmxResolver {
         let texture_path = normalize_texture_path(texture.as_ref());
 
         if texture_path.is_absolute() {
-            return PmxResolvedPath::new(original, texture_path);
+            return PmxResolvedPath::new(original, PmxSourceLocation::Disk(texture_path));
         }
 
-        let resolved = match source {
+        let location = match source {
             Some(source) if self.settings.prefer_model_directory => self
                 .resolve_against_source(source, &texture_path)
                 .or_else(|| self.resolve_common_texture_locations(source, &texture_path))
@@ -66,15 +66,19 @@ impl PmxResolver {
                     let source = PmxSource::folder(".");
                     self.resolve_common_texture_locations(&source, &texture_path)
                 })
-                .unwrap_or_else(|| texture_path.clone()),
+                .unwrap_or_else(|| PmxSourceLocation::Disk(texture_path.clone())),
         };
 
-        PmxResolvedPath::new(original, resolved)
+        PmxResolvedPath::new(original, location)
     }
 
-    fn resolve_against_source(&self, source: &PmxSource, texture_path: &Path) -> Option<PathBuf> {
+    fn resolve_against_source(
+        &self,
+        source: &PmxSource,
+        texture_path: &Path,
+    ) -> Option<PmxSourceLocation> {
         let resolved = source.resolve(texture_path);
-        if resolved.exists() {
+        if source.contains_location(&resolved) {
             return Some(resolved);
         }
 
@@ -85,13 +89,15 @@ impl PmxResolver {
         None
     }
 
-    fn resolve_plain_path(&self, texture_path: &Path) -> Option<PathBuf> {
+    fn resolve_plain_path(&self, texture_path: &Path) -> Option<PmxSourceLocation> {
         if texture_path.exists() {
-            return Some(texture_path.to_path_buf());
+            return Some(PmxSourceLocation::Disk(texture_path.to_path_buf()));
         }
 
         if self.settings.allow_case_fallbacks {
-            return PmxFolderSource::new(".").resolve_case_insensitive(texture_path);
+            return PmxFolderSource::new(".")
+                .resolve_case_insensitive(texture_path)
+                .map(PmxSourceLocation::Disk);
         }
 
         None
@@ -101,7 +107,7 @@ impl PmxResolver {
         &self,
         source: &PmxSource,
         texture_path: &Path,
-    ) -> Option<PathBuf> {
+    ) -> Option<PmxSourceLocation> {
         if texture_path.components().count() != 1 {
             return None;
         }
@@ -110,7 +116,7 @@ impl PmxResolver {
         for directory in common_texture_directories() {
             let candidate = Path::new(directory).join(file_name);
             let resolved = source.resolve(&candidate);
-            if resolved.exists() {
+            if source.contains_location(&resolved) {
                 return Some(resolved);
             }
 
@@ -126,22 +132,44 @@ impl PmxResolver {
 }
 
 impl PmxResolvedPath {
-    pub fn new(original: impl Into<String>, resolved: impl Into<PathBuf>) -> Self {
+    pub fn new(original: impl Into<String>, location: impl Into<PmxSourceLocation>) -> Self {
         Self {
             original: original.into(),
-            resolved: resolved.into(),
+            location: location.into(),
         }
     }
 
+    pub fn location(&self) -> &PmxSourceLocation {
+        &self.location
+    }
+
+    pub fn source_location(&self) -> &PmxSourceLocation {
+        &self.location
+    }
+
     pub fn resolved_path(&self) -> &Path {
-        &self.resolved
+        self.location.as_path()
     }
 
     pub fn relative_to(&self, root: impl AsRef<Path>) -> Option<PathBuf> {
-        self.resolved
-            .strip_prefix(root.as_ref())
-            .ok()
-            .map(Path::to_path_buf)
+        match &self.location {
+            PmxSourceLocation::Disk(path) => {
+                path.strip_prefix(root.as_ref()).ok().map(Path::to_path_buf)
+            }
+            PmxSourceLocation::Zip { entry, .. } => Some(PathBuf::from(entry)),
+        }
+    }
+}
+
+impl From<PathBuf> for PmxSourceLocation {
+    fn from(value: PathBuf) -> Self {
+        Self::Disk(value)
+    }
+}
+
+impl From<&Path> for PmxSourceLocation {
+    fn from(value: &Path) -> Self {
+        Self::Disk(value.to_path_buf())
     }
 }
 
@@ -156,10 +184,10 @@ fn common_texture_directories() -> &'static [&'static str] {
 #[cfg(test)]
 mod tests {
     use super::{PmxResolvedPath, PmxResolver, PmxResolverSettings};
-    use crate::source::PmxSource;
+    use crate::source::{PmxSource, PmxSourceLocation};
     use std::{
         fs,
-        path::PathBuf,
+        path::{Path, PathBuf},
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -179,9 +207,9 @@ mod tests {
         let source = PmxSource::folder(PathBuf::from(&model_root));
         let resolved = resolver.resolve_texture_path(Some(&source), "face.png");
 
-        assert!(resolved.resolved.exists());
+        assert!(resolved.resolved_path().exists());
         assert_eq!(
-            fs::canonicalize(&resolved.resolved).expect("resolved path should canonicalize"),
+            fs::canonicalize(resolved.resolved_path()).expect("resolved path should canonicalize"),
             fs::canonicalize(texture_root.join("Face.PNG"))
                 .expect("expected texture path should canonicalize")
         );
@@ -189,7 +217,11 @@ mod tests {
 
     #[test]
     fn computes_texture_path_relative_to_the_source_root() {
-        let source_root = PathBuf::from("assets/private/model");
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic")
+            .as_nanos();
+        let source_root = std::env::temp_dir().join(format!("bevy_pmx_resolver_root_{unique}"));
         let resolved =
             PmxResolvedPath::new("face.png", source_root.join("Texture").join("Face.PNG"));
 
@@ -198,5 +230,25 @@ mod tests {
             .expect("should strip the source root");
 
         assert_eq!(relative, PathBuf::from("Texture/Face.PNG"));
+    }
+
+    #[test]
+    fn tracks_zip_locations_without_forcing_them_into_paths() {
+        let resolved = PmxResolvedPath::new(
+            "face.png",
+            PmxSourceLocation::Zip {
+                archive: PathBuf::from("model.zip"),
+                entry: "Texture/Face.PNG".to_owned(),
+            },
+        );
+
+        assert_eq!(resolved.resolved_path(), Path::new("Texture/Face.PNG"));
+        assert_eq!(
+            resolved.location(),
+            &PmxSourceLocation::Zip {
+                archive: PathBuf::from("model.zip"),
+                entry: "Texture/Face.PNG".to_owned(),
+            }
+        );
     }
 }

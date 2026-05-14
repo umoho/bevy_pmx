@@ -2,7 +2,7 @@
 //!
 //! Module responsibilities:
 //! - `format`: only parse PMX binary data, no Bevy dependency.
-//! - `source`: locate files on disk; start with folders, later add zip.
+//! - `source`: locate files on disk or inside zip archives.
 //! - `resolver`: turn PMX texture strings into concrete paths.
 //! - `import`: convert PMX data into Bevy-friendly structures.
 //! - `bone`: runtime bone records and hierarchy helpers.
@@ -37,7 +37,7 @@ pub use loader::{PmxLoader, PmxLoaderSettings};
 pub use morph::PmxMorphRecord;
 pub use plugin::PmxPlugin;
 pub use resolver::{PmxResolvedPath, PmxResolver, PmxResolverSettings};
-pub use source::{PmxFolderSource, PmxSource};
+pub use source::{PmxFolderSource, PmxSource, PmxSourceLocation, PmxZipSource, ZipNameEncoding};
 
 pub mod prelude {
     pub use crate::asset::{
@@ -59,5 +59,7 @@ pub mod prelude {
     pub use crate::morph::PmxMorphRecord;
     pub use crate::plugin::PmxPlugin;
     pub use crate::resolver::{PmxResolvedPath, PmxResolver, PmxResolverSettings};
-    pub use crate::source::{PmxFolderSource, PmxSource};
+    pub use crate::source::{
+        PmxFolderSource, PmxSource, PmxSourceLocation, PmxZipSource, ZipNameEncoding,
+    };
 }

@@ -1,9 +1,15 @@
 use bevy::{
-    asset::{AssetLoader, AssetPath, LoadContext, io::Reader},
+    asset::{AssetLoader, LoadContext, RenderAssetUsages, io::Reader},
+    image::{CompressedImageFormats, ImageSampler, ImageType},
+    log::warn,
     prelude::{FromWorld, Image, Resource, World},
     reflect::TypePath,
+    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
-use std::path::{Path, PathBuf};
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
 
 use crate::{
     asset::{Pmx, PmxMaterialAsset},
@@ -12,7 +18,7 @@ use crate::{
     import::{PmxImportContext, import_pmx},
     labels::PmxAssetLabel,
     resolver::{PmxResolvedPath, PmxResolverSettings},
-    source::PmxSource,
+    source::{PmxSource, PmxSourceLocation},
 };
 
 #[derive(Debug, Clone, Resource, PartialEq, Eq)]
@@ -95,7 +101,7 @@ impl AssetLoader for PmxLoader {
         reader.read_to_end(&mut bytes).await?;
         let document = PmxDocument::from_bytes(&bytes)?;
 
-        let source = PmxSource::folder(source_root_for_load_context(load_context));
+        let source = source_for_load_context(load_context);
         let import_context = PmxImportContext {
             source: Some(source.clone()),
             resolver: self.settings.resolver.clone(),
@@ -107,9 +113,23 @@ impl AssetLoader for PmxLoader {
         if self.settings.load_textures {
             let texture_paths = model.texture_paths.clone();
             let mut textures = Vec::with_capacity(texture_paths.len());
-            for texture in &texture_paths {
-                let asset_path = texture_asset_path(load_context.path(), &source, texture)?;
-                textures.push(load_context.load::<Image>(asset_path));
+            for (texture_index, texture) in texture_paths.iter().enumerate() {
+                let image = match load_texture_image(&source, texture) {
+                    Ok(image) => image,
+                    Err(error) => {
+                        warn!(
+                            "missing texture: {} (resolved to {}) - using magenta placeholder",
+                            texture.original,
+                            texture.location()
+                        );
+                        warn!("  read error: {error}");
+                        placeholder_texture_image()
+                    }
+                };
+
+                let texture_handle = load_context
+                    .add_labeled_asset(PmxAssetLabel::Texture(texture_index).to_string(), image);
+                textures.push(texture_handle);
             }
             model = model.with_textures(textures);
         }
@@ -188,51 +208,105 @@ fn source_root_for_load_context(load_context: &LoadContext<'_>) -> PathBuf {
     }
 }
 
-fn texture_asset_path(
-    model_path: &AssetPath<'static>,
-    source: &PmxSource,
-    texture: &PmxResolvedPath,
-) -> PmxResult<AssetPath<'static>> {
-    let relative = texture
-        .relative_to(source.root())
-        .ok_or(PmxError::InvalidFormat(
-            "resolved texture path is not rooted in the PMX source",
-        ))?;
-    let relative = relative.to_str().ok_or(PmxError::InvalidFormat(
-        "resolved texture path is not valid UTF-8",
-    ))?;
+fn source_for_load_context(load_context: &LoadContext<'_>) -> PmxSource {
+    if load_context.path().source().as_str() == Some("zip") {
+        if let Some(source) = zip_source_for_load_context(load_context) {
+            return source;
+        }
+    }
 
-    model_path.resolve_embed(relative).map_err(|_| {
-        PmxError::InvalidFormat("resolved texture path cannot be converted to an asset path")
+    PmxSource::folder(source_root_for_load_context(load_context))
+}
+
+fn zip_source_for_load_context(load_context: &LoadContext<'_>) -> Option<PmxSource> {
+    let (archive, root) = split_zip_asset_path(load_context.path().path())?;
+    Some(PmxSource::zip(archive, root))
+}
+
+fn split_zip_asset_path(path: &Path) -> Option<(PathBuf, PathBuf)> {
+    let mut archive = PathBuf::new();
+    let mut entry = PathBuf::new();
+    let mut found_archive = false;
+
+    for component in path.components() {
+        if found_archive {
+            entry.push(component.as_os_str());
+        } else {
+            archive.push(component.as_os_str());
+            if component
+                .as_os_str()
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .ends_with(".zip")
+            {
+                found_archive = true;
+            }
+        }
+    }
+
+    if found_archive && !entry.as_os_str().is_empty() {
+        let root = entry.parent().map(Path::to_path_buf).unwrap_or_default();
+        Some((archive, root))
+    } else {
+        None
+    }
+}
+
+fn load_texture_image(source: &PmxSource, texture: &PmxResolvedPath) -> Result<Image, io::Error> {
+    let location = texture.location();
+    let bytes = source.read_bytes(location).map_err(|error| {
+        io::Error::other(format!(
+            "failed to read texture {} (resolved to {}) through the source abstraction: {error}",
+            texture.original, location,
+        ))
+    })?;
+    decode_texture(location, &bytes)
+}
+
+fn decode_texture(location: &PmxSourceLocation, bytes: &[u8]) -> Result<Image, io::Error> {
+    let extension = location.extension().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("texture {location} does not have a file extension"),
+        )
+    })?;
+
+    let extension = extension.to_ascii_lowercase();
+    let image_type = ImageType::Extension(extension.as_str());
+    Image::from_buffer(
+        bytes,
+        image_type,
+        CompressedImageFormats::all(),
+        true,
+        ImageSampler::Default,
+        RenderAssetUsages::default(),
+    )
+    .map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("failed to decode texture {location}: {error}"),
+        )
     })
+}
+
+fn placeholder_texture_image() -> Image {
+    Image::new_fill(
+        Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &[255, 0, 255, 255],
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::texture_asset_path;
     use crate::asset::{PmxMaterialAsset, PmxMaterialRecord};
-    use crate::resolver::PmxResolvedPath;
-    use crate::source::PmxSource;
-    use bevy::asset::AssetPath;
     use bevy::prelude::Image;
-    use std::path::{Path, PathBuf};
-
-    #[test]
-    fn converts_resolved_texture_path_into_a_source_preserving_asset_path() {
-        let model_path = AssetPath::parse("remote://private/foo/model.pmx");
-        let source = PmxSource::folder(PathBuf::from("assets/private/foo"));
-        let texture =
-            PmxResolvedPath::new("face.png", Path::new("assets/private/foo/Texture/Face.PNG"));
-
-        let asset_path = texture_asset_path(&model_path, &source, &texture)
-            .expect("should convert into an asset path");
-
-        assert_eq!(
-            asset_path.to_string(),
-            "remote://private/foo/Texture/Face.PNG"
-        );
-        assert_eq!(asset_path.source().as_str(), Some("remote"));
-    }
 
     #[test]
     fn material_assets_bind_loaded_texture_handles_in_document_order() {

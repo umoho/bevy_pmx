@@ -108,6 +108,15 @@ mod tests {
         },
         source::PmxSource,
     };
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_path(prefix: &str) -> std::path::PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic")
+            .as_nanos();
+        std::env::temp_dir().join(format!("{prefix}_{unique}"))
+    }
 
     fn sample_document() -> PmxDocument {
         PmxDocument {
@@ -207,7 +216,7 @@ mod tests {
 
     #[test]
     fn import_pmx_keeps_or_drops_the_raw_document_without_changing_geometry() {
-        let source = PmxSource::folder("assets/private/MMD_派蒙");
+        let source = PmxSource::folder(unique_temp_path("bevy_pmx_import"));
         let keep_context = PmxImportContext {
             source: Some(source.clone()),
             keep_raw_document: true,
