@@ -1,9 +1,3 @@
-//! Load a PMX file from the command line and open a Bevy window to inspect it.
-//!
-//! This example intentionally uses the crate's public API instead of any private internals:
-//! `parse_pmx` parses the file, `import_pmx` builds the Bevy-friendly model, and
-//! `PmxMeshGeometry::to_mesh()` turns the imported geometry into a renderable mesh.
-
 use std::{
     error::Error,
     fs, io,
@@ -15,37 +9,43 @@ use bevy::{
     image::{CompressedImageFormats, ImageSampler, ImageType},
     prelude::*,
     render::render_resource::{Extent3d, Face, TextureDimension, TextureFormat},
-    window::{PrimaryWindow, WindowPlugin},
+    window::PrimaryWindow,
 };
 use bevy_pmx::prelude::*;
-use clap::Parser;
 
-#[derive(Debug, Parser)]
-#[command(
-    name = "pmx_viewer",
-    version,
-    about = "Load a PMX file and open a viewer window"
-)]
-struct Cli {
-    /// Path to the PMX file to open.
-    #[arg(value_name = "PMX")]
-    path: PathBuf,
+use crate::{gizmos, orbit};
+
+#[derive(Debug, Resource)]
+pub(crate) struct SceneRequest {
+    pub(crate) path: PathBuf,
 }
 
 #[derive(Debug, Resource)]
-struct SceneRequest {
-    path: PathBuf,
+pub(crate) struct LoadedScene {
+    pub(crate) path: PathBuf,
+    pub(crate) model: Pmx,
+    pub(crate) bounds_min: Vec3,
+    pub(crate) bounds_max: Vec3,
+    pub(crate) bounds_center: Vec3,
+    pub(crate) bounds_radius: f32,
+    pub(crate) title: String,
 }
 
-#[derive(Debug)]
-struct ViewerScene {
-    path: PathBuf,
-    model: Pmx,
-    bounds_center: Vec3,
-    bounds_radius: f32,
-    title: String,
-    textures: Vec<DecodedTexture>,
+impl LoadedScene {
+    pub(crate) fn model_transform(&self) -> Transform {
+        Transform::from_translation(-self.bounds_center)
+    }
+
+    pub(crate) fn world_bounds(&self) -> (Vec3, Vec3) {
+        (
+            self.bounds_min - self.bounds_center,
+            self.bounds_max - self.bounds_center,
+        )
+    }
 }
+
+#[derive(Component)]
+pub(crate) struct ViewerPrimitive;
 
 #[derive(Debug)]
 struct DecodedTexture {
@@ -55,33 +55,70 @@ struct DecodedTexture {
     fallback: bool,
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let cli = Cli::parse();
-
-    App::new()
-        .insert_resource(SceneRequest { path: cli.path })
-        .insert_resource(GlobalAmbientLight {
-            color: Color::WHITE,
-            brightness: 200.0,
-            ..default()
-        })
-        .add_plugins((
-            DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "bevy_pmx".to_owned(),
-                    ..default()
-                }),
-                ..default()
-            }),
-            PmxPlugin::default(),
-        ))
-        .add_systems(Startup, bootstrap_scene)
-        .run();
-
-    Ok(())
+#[derive(Debug, Clone, Copy)]
+struct Bounds {
+    min: Vec3,
+    max: Vec3,
 }
 
-fn load_scene(path: &Path) -> Result<ViewerScene, Box<dyn Error>> {
+impl Bounds {
+    fn from_point(point: Vec3) -> Self {
+        Self {
+            min: point,
+            max: point,
+        }
+    }
+
+    fn include(&mut self, point: Vec3) {
+        self.min.x = self.min.x.min(point.x);
+        self.min.y = self.min.y.min(point.y);
+        self.min.z = self.min.z.min(point.z);
+        self.max.x = self.max.x.max(point.x);
+        self.max.y = self.max.y.max(point.y);
+        self.max.z = self.max.z.max(point.z);
+    }
+}
+
+pub(crate) fn bootstrap_scene(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    gizmo_settings: Res<gizmos::ViewerGizmoSettings>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    request: Res<SceneRequest>,
+) {
+    let (scene, textures) = load_scene(&request.path).unwrap_or_else(|error| {
+        error!(
+            "failed to load PMX scene {}: {error}",
+            request.path.display()
+        );
+        panic!(
+            "failed to load PMX scene {}: {error}",
+            request.path.display()
+        );
+    });
+
+    if let Ok(mut window) = windows.single_mut() {
+        window.title = scene.title.clone();
+    }
+
+    log_scene_summary(&scene, &textures);
+    spawn_scene_entities(
+        &mut commands,
+        &mut images,
+        &mut meshes,
+        &mut materials,
+        &scene,
+        &textures,
+    );
+    orbit::spawn_orbit_camera(&mut commands, &scene);
+    gizmos::spawn_gizmo_overlay(&mut commands, &gizmo_settings);
+
+    commands.insert_resource(scene);
+}
+
+fn load_scene(path: &Path) -> Result<(LoadedScene, Vec<DecodedTexture>), Box<dyn Error>> {
     let bytes = fs::read(path).map_err(|error| {
         io::Error::new(
             error.kind(),
@@ -102,70 +139,40 @@ fn load_scene(path: &Path) -> Result<ViewerScene, Box<dyn Error>> {
     }
 
     let textures = load_textures(model.texture_paths());
-    let (bounds_center, bounds_radius) = bounds_for_geometry(model.geometry());
+    let (bounds_min, bounds_max) = bounds_for_model(&model);
+    let bounds_center = (bounds_min + bounds_max) * 0.5;
+    let bounds_radius = ((bounds_max - bounds_min) * 0.5).length().max(1.0);
     let title = build_window_title(path, &model);
 
-    Ok(ViewerScene {
-        path: path.to_path_buf(),
-        model,
-        bounds_center,
-        bounds_radius,
-        title,
+    Ok((
+        LoadedScene {
+            path: path.to_path_buf(),
+            model,
+            bounds_min,
+            bounds_max,
+            bounds_center,
+            bounds_radius,
+            title,
+        },
         textures,
-    })
+    ))
 }
 
-fn bootstrap_scene(
-    mut commands: Commands,
-    mut images: ResMut<Assets<Image>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut windows: Query<&mut Window, With<PrimaryWindow>>,
-    request: Res<SceneRequest>,
-) {
-    let scene = load_scene(&request.path).unwrap_or_else(|error| {
-        error!(
-            "failed to load PMX scene {}: {error}",
-            request.path.display()
-        );
-        panic!(
-            "failed to load PMX scene {}: {error}",
-            request.path.display()
-        );
-    });
-
-    if let Ok(mut window) = windows.single_mut() {
-        window.title = scene.title.clone();
-    }
-
-    log_scene_summary(&scene);
-    setup_scene(
-        &mut commands,
-        &mut images,
-        &mut meshes,
-        &mut materials,
-        &scene,
-    );
-}
-
-fn setup_scene(
+fn spawn_scene_entities(
     commands: &mut Commands,
     images: &mut Assets<Image>,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
-    scene: &ViewerScene,
+    scene: &LoadedScene,
+    textures: &[DecodedTexture],
 ) {
-    let texture_handles: Vec<Handle<Image>> = scene
-        .textures
+    let texture_handles: Vec<Handle<Image>> = textures
         .iter()
         .map(|texture| images.add(texture.image.clone()))
         .collect();
-    let texture_has_alpha: Vec<bool> = scene
-        .textures
-        .iter()
-        .map(|texture| texture.has_alpha)
-        .collect();
-    let model_transform = Transform::from_translation(-scene.bounds_center);
+    let texture_has_alpha: Vec<bool> = textures.iter().map(|texture| texture.has_alpha).collect();
+    let model_transform = scene.model_transform();
+    let mut spawned_any = false;
 
     if scene.model.primitives().is_empty() {
         let mesh = meshes.add(scene.model.geometry().to_mesh());
@@ -175,8 +182,10 @@ fn setup_scene(
             Name::new("PMX Model"),
             Mesh3d(mesh),
             MeshMaterial3d(material),
+            ViewerPrimitive,
             model_transform,
         ));
+        spawned_any = true;
     } else {
         for (primitive_index, primitive) in scene.model.primitives().iter().enumerate() {
             let Some(record) = scene.model.material_records().get(primitive.material_index) else {
@@ -197,18 +206,25 @@ fn setup_scene(
                 )),
                 Mesh3d(mesh),
                 MeshMaterial3d(material),
-                model_transform.clone(),
+                ViewerPrimitive,
+                model_transform,
             ));
+            spawned_any = true;
         }
     }
 
-    let camera_distance = (scene.bounds_radius * 2.8).max(2.0);
-    let camera_height = (scene.bounds_radius * 0.25).max(0.5);
-    commands.spawn((
-        Name::new("Camera"),
-        Camera3d::default(),
-        Transform::from_xyz(0.0, camera_height, camera_distance).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
+    if !spawned_any {
+        let mesh = meshes.add(scene.model.geometry().to_mesh());
+        let material = materials.add(default_viewer_material());
+
+        commands.spawn((
+            Name::new("PMX Model"),
+            Mesh3d(mesh),
+            MeshMaterial3d(material),
+            ViewerPrimitive,
+            model_transform,
+        ));
+    }
 
     commands.spawn((
         Name::new("Directional Light"),
@@ -221,7 +237,7 @@ fn setup_scene(
     ));
 }
 
-fn log_scene_summary(scene: &ViewerScene) {
+fn log_scene_summary(scene: &LoadedScene, textures: &[DecodedTexture]) {
     let model_name = scene
         .model
         .raw_document()
@@ -244,8 +260,8 @@ fn log_scene_summary(scene: &ViewerScene) {
     info!("Primitives: {}", scene.model.primitives().len());
     info!("Materials: {}", scene.model.material_records().len());
     info!("Textures: {}", scene.model.texture_paths().len());
-    info!("Decoded textures: {}", scene.textures.len());
-    for (index, texture) in scene.textures.iter().enumerate() {
+    info!("Decoded textures: {}", textures.len());
+    for (index, texture) in textures.iter().enumerate() {
         let size = texture.image.texture_descriptor.size;
         if texture.fallback {
             info!(
@@ -465,25 +481,18 @@ fn placeholder_texture_image() -> Image {
     )
 }
 
-fn bounds_for_geometry(geometry: &PmxMeshGeometry) -> (Vec3, f32) {
-    let Some(first) = geometry.positions.first() else {
-        return (Vec3::ZERO, 1.0);
+fn bounds_for_model(model: &Pmx) -> (Vec3, Vec3) {
+    let Some(first_position) = model.geometry().positions.first() else {
+        return (Vec3::ZERO, Vec3::ONE);
     };
 
-    let mut min = Vec3::from(*first);
-    let mut max = Vec3::from(*first);
-
-    for position in &geometry.positions[1..] {
-        let point = Vec3::from(*position);
-        min.x = min.x.min(point.x);
-        min.y = min.y.min(point.y);
-        min.z = min.z.min(point.z);
-        max.x = max.x.max(point.x);
-        max.y = max.y.max(point.y);
-        max.z = max.z.max(point.z);
+    let mut bounds = Bounds::from_point(Vec3::from(*first_position));
+    for position in &model.geometry().positions[1..] {
+        bounds.include(Vec3::from(*position));
+    }
+    for bone in model.bone_records() {
+        bounds.include(Vec3::from(bone.position));
     }
 
-    let center = (min + max) * 0.5;
-    let radius = ((max - min) * 0.5).length().max(1.0);
-    (center, radius)
+    (bounds.min, bounds.max)
 }
