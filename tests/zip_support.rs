@@ -1,3 +1,5 @@
+#![cfg(feature = "zip")]
+
 use bevy::{
     asset::RenderAssetUsages,
     asset::{AssetPlugin, AssetServer, LoadState},

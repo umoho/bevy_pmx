@@ -7,9 +7,14 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 use std::{
-    io::{self, Cursor, Read},
+    io,
     path::{Path, PathBuf},
 };
+
+#[cfg(feature = "zip")]
+use std::io::{Cursor, Read};
+
+#[cfg(feature = "zip")]
 use zip::ZipArchive;
 
 use crate::{
@@ -19,8 +24,11 @@ use crate::{
     import::{PmxImportContext, import_pmx},
     labels::PmxAssetLabel,
     resolver::{PmxResolvedPath, PmxResolverSettings},
-    source::{PmxSource, PmxSourceLocation, ZipNameEncoding, find_first_pmx_zip_entry_root},
+    source::{PmxSource, PmxSourceLocation},
 };
+
+#[cfg(feature = "zip")]
+use crate::source::{ZipNameEncoding, find_first_pmx_zip_entry_root};
 
 #[derive(Debug, Clone, Resource, PartialEq, Eq)]
 pub struct PmxLoaderSettings {
@@ -39,6 +47,7 @@ pub struct PmxLoaderSettings {
     /// Retains the original parsed PMX document in `Pmx::raw_document`.
     pub keep_raw_document: bool,
     /// Decoding strategy for ZIP entry names when loading `.zip` archives.
+    #[cfg(feature = "zip")]
     pub zip_name_encoding: ZipNameEncoding,
     pub resolver: PmxResolverSettings,
 }
@@ -53,6 +62,7 @@ impl Default for PmxLoaderSettings {
             load_morphs: true,
             load_physics: true,
             keep_raw_document: true,
+            #[cfg(feature = "zip")]
             zip_name_encoding: ZipNameEncoding::Auto,
             resolver: PmxResolverSettings::default(),
         }
@@ -104,7 +114,9 @@ impl AssetLoader for PmxLoader {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
 
+        #[cfg(feature = "zip")]
         let asset_path = load_context.path().path();
+        #[cfg(feature = "zip")]
         let (document, source) = if is_zip_asset(asset_path) {
             load_zip_document(
                 &archive_path_for_load_context(load_context),
@@ -117,6 +129,12 @@ impl AssetLoader for PmxLoader {
                 source_for_load_context(load_context),
             )
         };
+
+        #[cfg(not(feature = "zip"))]
+        let (document, source) = (
+            PmxDocument::from_bytes(&bytes)?,
+            source_for_load_context(load_context),
+        );
 
         let import_context = PmxImportContext {
             source: Some(source.clone()),
@@ -246,7 +264,15 @@ impl AssetLoader for PmxLoader {
     }
 
     fn extensions(&self) -> &[&str] {
-        &["pmx", "zip"]
+        #[cfg(feature = "zip")]
+        {
+            &["pmx", "zip"]
+        }
+
+        #[cfg(not(feature = "zip"))]
+        {
+            &["pmx"]
+        }
     }
 }
 
@@ -266,31 +292,38 @@ fn source_root_for_load_context(load_context: &LoadContext<'_>) -> PathBuf {
 }
 
 fn source_for_load_context(load_context: &LoadContext<'_>) -> PmxSource {
-    if load_context.path().source().as_str() == Some("zip") {
-        if let Some(source) = zip_source_for_load_context(load_context) {
-            return source;
+    #[cfg(feature = "zip")]
+    {
+        if load_context.path().source().as_str() == Some("zip") {
+            if let Some(source) = zip_source_for_load_context(load_context) {
+                return source;
+            }
         }
     }
 
     PmxSource::folder(source_root_for_load_context(load_context))
 }
 
+#[cfg(feature = "zip")]
 fn zip_source_for_load_context(load_context: &LoadContext<'_>) -> Option<PmxSource> {
     let (archive, root) = split_zip_asset_path(load_context.path().path())?;
     Some(PmxSource::zip(archive, root))
 }
 
+#[cfg(feature = "zip")]
 fn archive_path_for_load_context(load_context: &LoadContext<'_>) -> PathBuf {
     source_root_for_load_context(load_context)
         .join(load_context.path().path().file_name().unwrap_or_default())
 }
 
+#[cfg(feature = "zip")]
 fn is_zip_asset(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
 }
 
+#[cfg(feature = "zip")]
 fn split_zip_asset_path(path: &Path) -> Option<(PathBuf, PathBuf)> {
     let mut archive = PathBuf::new();
     let mut entry = PathBuf::new();
@@ -320,6 +353,7 @@ fn split_zip_asset_path(path: &Path) -> Option<(PathBuf, PathBuf)> {
     }
 }
 
+#[cfg(feature = "zip")]
 fn load_zip_document(
     archive_path: &Path,
     archive_bytes: &[u8],
@@ -336,6 +370,7 @@ fn load_zip_document(
     Ok((document, source))
 }
 
+#[cfg(feature = "zip")]
 fn read_zip_entry_bytes(archive_bytes: &[u8], index: usize) -> io::Result<Vec<u8>> {
     let cursor = Cursor::new(archive_bytes);
     let mut archive = ZipArchive::new(cursor).map_err(zip_error_to_io)?;
@@ -382,6 +417,7 @@ fn decode_texture(location: &PmxSourceLocation, bytes: &[u8]) -> Result<Image, i
     })
 }
 
+#[cfg(feature = "zip")]
 fn zip_error_to_io(error: zip::result::ZipError) -> io::Error {
     io::Error::other(error)
 }

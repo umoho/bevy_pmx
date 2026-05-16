@@ -1,6 +1,6 @@
 use std::{
     error::Error,
-    fs, io,
+    io,
     path::{Path, PathBuf},
 };
 
@@ -12,6 +12,11 @@ use bevy::{
     window::PrimaryWindow,
 };
 use bevy_pmx::prelude::*;
+
+#[cfg(feature = "zip")]
+use std::fs;
+
+#[cfg(feature = "zip")]
 use zip::ZipArchive;
 
 use crate::{gizmos, orbit};
@@ -165,15 +170,7 @@ fn load_scene(path: &Path) -> Result<(LoadedScene, Vec<DecodedTexture>), Box<dyn
 
 fn source_for_scene(path: &Path) -> Result<(PmxSource, PmxSourceLocation), Box<dyn Error>> {
     if is_zip_archive(path) {
-        let (entry, root) = discover_zip_pmx_entry(path)?.ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("zip archive {} does not contain a PMX file", path.display()),
-            )
-        })?;
-        let source = PmxSource::zip_with_encoding(path, root, ZipNameEncoding::Auto);
-        let location = PmxSourceLocation::zip(path.to_path_buf(), entry);
-        return Ok((source, location));
+        return zip_source_for_scene(path);
     }
 
     let source = PmxSource::folder(path.parent().unwrap_or_else(|| Path::new(".")));
@@ -187,6 +184,32 @@ fn is_zip_archive(path: &Path) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
 }
 
+#[cfg(feature = "zip")]
+fn zip_source_for_scene(path: &Path) -> Result<(PmxSource, PmxSourceLocation), Box<dyn Error>> {
+    let (entry, root) = discover_zip_pmx_entry(path)?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("zip archive {} does not contain a PMX file", path.display()),
+        )
+    })?;
+    let source = PmxSource::zip_with_encoding(path, root, ZipNameEncoding::Auto);
+    let location = PmxSourceLocation::zip(path.to_path_buf(), entry);
+    Ok((source, location))
+}
+
+#[cfg(not(feature = "zip"))]
+fn zip_source_for_scene(path: &Path) -> Result<(PmxSource, PmxSourceLocation), Box<dyn Error>> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!(
+            "zip support is disabled; rebuild with `--features zip` to open {}",
+            path.display()
+        ),
+    )
+    .into())
+}
+
+#[cfg(feature = "zip")]
 fn discover_zip_pmx_entry(path: &Path) -> Result<Option<(String, PathBuf)>, io::Error> {
     let file = fs::File::open(path)?;
     let mut archive = ZipArchive::new(file).map_err(zip_error_to_io)?;
@@ -226,6 +249,7 @@ fn discover_zip_pmx_entry(path: &Path) -> Result<Option<(String, PathBuf)>, io::
     Ok(None)
 }
 
+#[cfg(feature = "zip")]
 fn normalize_zip_entry_name(value: &str) -> Option<String> {
     let mut components = Vec::new();
     let normalized = value.replace('\\', "/");
@@ -245,6 +269,7 @@ fn normalize_zip_entry_name(value: &str) -> Option<String> {
     Some(components.join("/"))
 }
 
+#[cfg(feature = "zip")]
 fn zip_error_to_io(error: zip::result::ZipError) -> io::Error {
     io::Error::other(error)
 }
@@ -583,7 +608,7 @@ fn bounds_for_model(model: &Pmx) -> (Vec3, Vec3) {
     (bounds.min, bounds.max)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "zip"))]
 mod tests {
     use super::{load_scene, load_texture};
     use bevy_pmx::prelude::*;

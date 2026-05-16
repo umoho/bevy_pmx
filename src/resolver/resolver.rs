@@ -156,6 +156,7 @@ impl PmxResolvedPath {
             PmxSourceLocation::Disk(path) => {
                 path.strip_prefix(root.as_ref()).ok().map(Path::to_path_buf)
             }
+            #[cfg(feature = "zip")]
             PmxSourceLocation::Zip { entry, .. } => Some(PathBuf::from(entry)),
         }
     }
@@ -184,10 +185,10 @@ fn common_texture_directories() -> &'static [&'static str] {
 #[cfg(test)]
 mod tests {
     use super::{PmxResolvedPath, PmxResolver, PmxResolverSettings};
-    use crate::source::{PmxSource, PmxSourceLocation};
+    use crate::source::PmxSource;
     use std::{
         fs,
-        path::{Path, PathBuf},
+        path::PathBuf,
         sync::atomic::{AtomicU64, Ordering},
     };
 
@@ -236,20 +237,24 @@ mod tests {
         assert_eq!(relative, PathBuf::from("Texture/Face.PNG"));
     }
 
+    #[cfg(feature = "zip")]
     #[test]
     fn tracks_zip_locations_without_forcing_them_into_paths() {
         let resolved = PmxResolvedPath::new(
             "face.png",
-            PmxSourceLocation::Zip {
+            crate::source::PmxSourceLocation::Zip {
                 archive: PathBuf::from("model.zip"),
                 entry: "Texture/Face.PNG".to_owned(),
             },
         );
 
-        assert_eq!(resolved.resolved_path(), Path::new("Texture/Face.PNG"));
+        assert_eq!(
+            resolved.resolved_path(),
+            std::path::Path::new("Texture/Face.PNG")
+        );
         assert_eq!(
             resolved.location(),
-            &PmxSourceLocation::Zip {
+            &crate::source::PmxSourceLocation::Zip {
                 archive: PathBuf::from("model.zip"),
                 entry: "Texture/Face.PNG".to_owned(),
             }

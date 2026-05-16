@@ -1,4 +1,4 @@
-//! Load a PMX file or zip archive from the command line and open a Bevy window to inspect it.
+//! Load a PMX file from the command line and open a Bevy window to inspect it.
 //!
 //! This example intentionally uses the crate's public API instead of any private internals:
 //! `parse_pmx` parses the file, `import_pmx` builds the Bevy-friendly model, and
@@ -24,10 +24,10 @@ use crate::scene::{SceneRequest, bootstrap_scene};
 #[command(
     name = "pmx_viewer",
     version,
-    about = "Load a PMX file or zip archive and open a viewer window"
+    about = "Load a PMX file and open a viewer window"
 )]
 struct Cli {
-    /// Path to the PMX file or zip archive to open.
+    /// Path to the PMX file to open.
     #[arg(value_name = "PMX")]
     path: std::path::PathBuf,
 }

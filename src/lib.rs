@@ -2,7 +2,7 @@
 //!
 //! Module responsibilities:
 //! - `format`: only parse PMX binary data, no Bevy dependency.
-//! - `source`: locate files on disk or inside zip archives.
+//! - `source`: locate files on disk or, with the `zip` feature, inside zip archives.
 //! - `resolver`: turn PMX texture strings into concrete paths.
 //! - `import`: convert PMX data into Bevy-friendly structures.
 //! - `bone`: runtime bone records and hierarchy helpers.
@@ -10,7 +10,7 @@
 //! - `physics`: runtime physics records and data-preserving helpers.
 //! - `asset`: public asset types such as `Pmx`, `PmxMaterialAsset`, `PmxPrimitive`, and
 //!   `PmxMeshGeometry`.
-//! - `loader`: Bevy asset loader entry and settings.
+//! - `loader`: Bevy asset loader entry and settings, with optional zip archive support.
 //! - `plugin`: Bevy plugin registration and configuration.
 
 #![forbid(unsafe_code)]
@@ -50,7 +50,10 @@ pub use morph::PmxMorphRecord;
 pub use physics::{PmxJointRecord, PmxRigidBodyRecord, PmxSoftBodyRecord};
 pub use plugin::PmxPlugin;
 pub use resolver::{PmxResolvedPath, PmxResolver, PmxResolverSettings};
-pub use source::{PmxFolderSource, PmxSource, PmxSourceLocation, PmxZipSource, ZipNameEncoding};
+pub use source::{PmxFolderSource, PmxSource, PmxSourceLocation};
+
+#[cfg(feature = "zip")]
+pub use source::{PmxZipSource, ZipNameEncoding};
 
 pub mod prelude {
     pub use crate::asset::{
@@ -73,7 +76,8 @@ pub mod prelude {
     pub use crate::physics::{PmxJointRecord, PmxRigidBodyRecord, PmxSoftBodyRecord};
     pub use crate::plugin::PmxPlugin;
     pub use crate::resolver::{PmxResolvedPath, PmxResolver, PmxResolverSettings};
-    pub use crate::source::{
-        PmxFolderSource, PmxSource, PmxSourceLocation, PmxZipSource, ZipNameEncoding,
-    };
+    pub use crate::source::{PmxFolderSource, PmxSource, PmxSourceLocation};
+
+    #[cfg(feature = "zip")]
+    pub use crate::source::{PmxZipSource, ZipNameEncoding};
 }

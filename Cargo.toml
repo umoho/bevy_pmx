@@ -3,10 +3,14 @@ name = "bevy_pmx"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+zip = ["dep:encoding_rs", "dep:zip"]
+
 [dependencies]
 bevy = { version = "0.18.1", features = ["bmp", "debug", "jpeg", "png", "tga"] }
-encoding_rs = "0.8.35"
-zip = { version = "9.0.0-pre2", default-features = false, features = ["deflate-flate2"] }
+encoding_rs = { version = "0.8.35", optional = true }
+zip = { version = "9.0.0-pre2", default-features = false, features = ["deflate-flate2"], optional = true }
 
 [dev-dependencies]
 clap = { version = "4.6.1", features = ["derive"] }

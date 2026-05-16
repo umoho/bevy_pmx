@@ -71,13 +71,14 @@ fn use_model(pmx_assets: Res<Assets<Pmx>>, handle: Res<ModelHandle>) {
 
 ### 手动导入
 
-如果你需要自己控制文件来源，或者要从 `.zip` 中读取 PMX 和纹理，可以直接使用 `PmxSource` 和 `import_pmx`：
+如果你需要自己控制文件来源，或者要从 `.zip` 中读取 PMX 和纹理，可以直接使用 `PmxSource` 和 `import_pmx`。`.zip` 支持需要开启 `zip` feature：
 
 ```rust
 use bevy_pmx::prelude::*;
 
 let source = PmxSource::folder("assets/models/character");
 // 或者：
+// 需要开启 `zip` feature
 // let source = PmxSource::zip("assets/models/character.zip", "character");
 
 let bytes = source.read_bytes(source.resolve("character.pmx"))?;
@@ -89,7 +90,7 @@ let model = import_pmx(document, &PmxImportContext::with_source(source)).model;
 
 ```bash
 cargo run --example pmx_viewer -- path/to/model.pmx
-cargo run --example pmx_viewer -- path/to/model.zip
+cargo run --features zip --example pmx_viewer -- path/to/model.zip
 ```
 
 ## 版本

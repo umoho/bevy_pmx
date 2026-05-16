@@ -1,11 +1,17 @@
 use std::{
-    borrow::Cow,
-    fmt, fs,
-    io::{self, Cursor, Read},
+    fmt, fs, io,
     path::{Component, Path, PathBuf},
 };
 
+#[cfg(feature = "zip")]
+use std::{
+    borrow::Cow,
+    io::{Cursor, Read},
+};
+
+#[cfg(feature = "zip")]
 use encoding_rs::{GBK, SHIFT_JIS};
+#[cfg(feature = "zip")]
 use zip::{ZipArchive, read::ZipFile};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +93,7 @@ impl PmxFolderSource {
     }
 }
 
+#[cfg(feature = "zip")]
 /// The character set used to decode ZIP entry names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ZipNameEncoding {
@@ -97,12 +104,14 @@ pub enum ZipNameEncoding {
     Gbk,
 }
 
+#[cfg(feature = "zip")]
 impl Default for ZipNameEncoding {
     fn default() -> Self {
         Self::Auto
     }
 }
 
+#[cfg(feature = "zip")]
 impl ZipNameEncoding {
     /// Decodes a ZIP entry name using this encoding.
     pub fn decode_name<'a>(self, raw: &'a [u8]) -> Option<Cow<'a, str>> {
@@ -124,6 +133,7 @@ impl ZipNameEncoding {
     }
 }
 
+#[cfg(feature = "zip")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PmxZipSource {
     pub archive: PathBuf,
@@ -131,6 +141,7 @@ pub struct PmxZipSource {
     pub name_encoding: ZipNameEncoding,
 }
 
+#[cfg(feature = "zip")]
 impl PmxZipSource {
     pub fn new(archive: impl Into<PathBuf>, root: impl Into<PathBuf>) -> Self {
         Self::with_encoding(archive, root, ZipNameEncoding::Auto)
@@ -219,7 +230,11 @@ impl PmxZipSource {
 #[non_exhaustive]
 pub enum PmxSourceLocation {
     Disk(PathBuf),
-    Zip { archive: PathBuf, entry: String },
+    #[cfg(feature = "zip")]
+    Zip {
+        archive: PathBuf,
+        entry: String,
+    },
 }
 
 impl PmxSourceLocation {
@@ -227,6 +242,7 @@ impl PmxSourceLocation {
         Self::Disk(path.into())
     }
 
+    #[cfg(feature = "zip")]
     pub fn zip(archive: impl Into<PathBuf>, entry: impl Into<String>) -> Self {
         Self::Zip {
             archive: archive.into(),
@@ -237,6 +253,7 @@ impl PmxSourceLocation {
     pub fn as_disk_path(&self) -> Option<&Path> {
         match self {
             Self::Disk(path) => Some(path),
+            #[cfg(feature = "zip")]
             Self::Zip { .. } => None,
         }
     }
@@ -244,6 +261,7 @@ impl PmxSourceLocation {
     pub fn as_path(&self) -> &Path {
         match self {
             Self::Disk(path) => path.as_path(),
+            #[cfg(feature = "zip")]
             Self::Zip { entry, .. } => Path::new(entry),
         }
     }
@@ -251,6 +269,7 @@ impl PmxSourceLocation {
     pub fn archive(&self) -> Option<&Path> {
         match self {
             Self::Disk(_) => None,
+            #[cfg(feature = "zip")]
             Self::Zip { archive, .. } => Some(archive),
         }
     }
@@ -258,6 +277,7 @@ impl PmxSourceLocation {
     pub fn entry(&self) -> Option<&str> {
         match self {
             Self::Disk(_) => None,
+            #[cfg(feature = "zip")]
             Self::Zip { entry, .. } => Some(entry),
         }
     }
@@ -265,6 +285,7 @@ impl PmxSourceLocation {
     pub fn extension(&self) -> Option<&str> {
         match self {
             Self::Disk(path) => path.extension().and_then(|ext| ext.to_str()),
+            #[cfg(feature = "zip")]
             Self::Zip { entry, .. } => Path::new(entry).extension().and_then(|ext| ext.to_str()),
         }
     }
@@ -280,6 +301,7 @@ impl From<PmxSourceLocation> for PathBuf {
     fn from(value: PmxSourceLocation) -> Self {
         match value {
             PmxSourceLocation::Disk(path) => path,
+            #[cfg(feature = "zip")]
             PmxSourceLocation::Zip { entry, .. } => PathBuf::from(entry),
         }
     }
@@ -289,6 +311,7 @@ impl fmt::Display for PmxSourceLocation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Disk(path) => write!(f, "{}", path.display()),
+            #[cfg(feature = "zip")]
             Self::Zip { archive, entry } => write!(f, "{}::{}", archive.display(), entry),
         }
     }
@@ -298,6 +321,7 @@ impl fmt::Display for PmxSourceLocation {
 #[non_exhaustive]
 pub enum PmxSource {
     Folder(PmxFolderSource),
+    #[cfg(feature = "zip")]
     Zip(PmxZipSource),
 }
 
@@ -312,10 +336,12 @@ impl PmxSource {
         Self::Folder(PmxFolderSource::new(root))
     }
 
+    #[cfg(feature = "zip")]
     pub fn zip(archive: impl Into<PathBuf>, root: impl Into<PathBuf>) -> Self {
         Self::Zip(PmxZipSource::new(archive, root))
     }
 
+    #[cfg(feature = "zip")]
     pub fn zip_with_encoding(
         archive: impl Into<PathBuf>,
         root: impl Into<PathBuf>,
@@ -327,10 +353,12 @@ impl PmxSource {
     pub fn as_folder(&self) -> Option<&PmxFolderSource> {
         match self {
             Self::Folder(source) => Some(source),
+            #[cfg(feature = "zip")]
             Self::Zip(_) => None,
         }
     }
 
+    #[cfg(feature = "zip")]
     pub fn as_zip(&self) -> Option<&PmxZipSource> {
         match self {
             Self::Folder(_) => None,
@@ -341,6 +369,7 @@ impl PmxSource {
     pub fn root(&self) -> &Path {
         match self {
             Self::Folder(source) => source.root(),
+            #[cfg(feature = "zip")]
             Self::Zip(source) => source.archive(),
         }
     }
@@ -348,6 +377,7 @@ impl PmxSource {
     pub fn root_path(&self) -> Option<&Path> {
         match self {
             Self::Folder(source) => Some(source.root()),
+            #[cfg(feature = "zip")]
             Self::Zip(_) => None,
         }
     }
@@ -360,6 +390,7 @@ impl PmxSource {
 
         match self {
             Self::Folder(source) => PmxSourceLocation::Disk(source.resolve(path)),
+            #[cfg(feature = "zip")]
             Self::Zip(source) => source.resolve(path),
         }
     }
@@ -378,6 +409,7 @@ impl PmxSource {
             Self::Folder(source) => source
                 .resolve_case_insensitive(path)
                 .map(PmxSourceLocation::Disk),
+            #[cfg(feature = "zip")]
             Self::Zip(source) => source.resolve_case_insensitive(path),
         }
     }
@@ -385,6 +417,7 @@ impl PmxSource {
     pub fn contains_location(&self, location: &PmxSourceLocation) -> bool {
         match location {
             PmxSourceLocation::Disk(path) => path.exists(),
+            #[cfg(feature = "zip")]
             PmxSourceLocation::Zip { archive, entry } => match self {
                 Self::Folder(_) => false,
                 Self::Zip(source) => {
@@ -400,6 +433,7 @@ impl PmxSource {
     pub fn read_bytes(&self, location: &PmxSourceLocation) -> io::Result<Vec<u8>> {
         match location {
             PmxSourceLocation::Disk(path) => fs::read(path),
+            #[cfg(feature = "zip")]
             PmxSourceLocation::Zip { archive, entry } => match self {
                 Self::Folder(_) => Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -425,12 +459,14 @@ impl From<PmxFolderSource> for PmxSource {
     }
 }
 
+#[cfg(feature = "zip")]
 impl From<PmxZipSource> for PmxSource {
     fn from(source: PmxZipSource) -> Self {
         Self::Zip(source)
     }
 }
 
+#[cfg(feature = "zip")]
 fn read_zip_entry_bytes(archive_path: &Path, index: usize) -> io::Result<Vec<u8>> {
     let file = fs::File::open(archive_path)?;
     let mut archive = ZipArchive::new(file).map_err(zip_error_to_io)?;
@@ -440,6 +476,7 @@ fn read_zip_entry_bytes(archive_path: &Path, index: usize) -> io::Result<Vec<u8>
     Ok(bytes)
 }
 
+#[cfg(feature = "zip")]
 fn find_zip_entry(
     archive_path: &Path,
     target: &str,
@@ -488,6 +525,7 @@ fn find_zip_entry(
     Ok(case_match)
 }
 
+#[cfg(feature = "zip")]
 pub(crate) fn find_first_pmx_zip_entry_root(
     archive_bytes: &[u8],
     encoding: ZipNameEncoding,
@@ -521,6 +559,7 @@ pub(crate) fn find_first_pmx_zip_entry_root(
     Ok(None)
 }
 
+#[cfg(feature = "zip")]
 fn decode_zip_entry_candidates<R: Read + ?Sized>(
     file: &ZipFile<'_, R>,
     encoding: ZipNameEncoding,
@@ -549,12 +588,14 @@ fn decode_zip_entry_candidates<R: Read + ?Sized>(
     candidates
 }
 
+#[cfg(feature = "zip")]
 fn push_unique(candidates: &mut Vec<String>, candidate: String) {
     if !candidates.iter().any(|existing| existing == &candidate) {
         candidates.push(candidate);
     }
 }
 
+#[cfg(feature = "zip")]
 fn push_unique_from_raw(candidates: &mut Vec<String>, raw: &[u8], encoding: ZipNameEncoding) {
     let Some(candidate) = decode_zip_name(raw, encoding) else {
         return;
@@ -562,6 +603,7 @@ fn push_unique_from_raw(candidates: &mut Vec<String>, raw: &[u8], encoding: ZipN
     push_unique(candidates, candidate);
 }
 
+#[cfg(feature = "zip")]
 fn decode_zip_name(raw: &[u8], encoding: ZipNameEncoding) -> Option<String> {
     match encoding {
         ZipNameEncoding::Auto => unreachable!("Auto is only used for candidate selection"),
@@ -577,6 +619,7 @@ fn decode_zip_name(raw: &[u8], encoding: ZipNameEncoding) -> Option<String> {
     }
 }
 
+#[cfg(feature = "zip")]
 fn normalize_zip_entry_name(value: &str) -> Option<String> {
     let mut components = Vec::new();
     let normalized = value.replace('\\', "/");
@@ -596,10 +639,12 @@ fn normalize_zip_entry_name(value: &str) -> Option<String> {
     Some(components.join("/"))
 }
 
+#[cfg(feature = "zip")]
 fn normalize_zip_entry_lossy(value: &str) -> String {
     normalize_zip_entry_name(value).unwrap_or_else(|| value.replace('\\', "/"))
 }
 
+#[cfg(feature = "zip")]
 fn join_zip_entry_lossy(root: &str, path: &Path) -> String {
     let path = {
         let path = path.to_string_lossy();
@@ -614,6 +659,7 @@ fn join_zip_entry_lossy(root: &str, path: &Path) -> String {
     format!("{root}/{path}")
 }
 
+#[cfg(feature = "zip")]
 fn join_zip_entry_strict(root: &str, path: &Path) -> Option<String> {
     let path = {
         let path = path.to_string_lossy();
@@ -628,6 +674,7 @@ fn join_zip_entry_strict(root: &str, path: &Path) -> Option<String> {
     Some(format!("{root}/{path}"))
 }
 
+#[cfg(feature = "zip")]
 fn is_zip_noise_entry(name_raw: &[u8]) -> bool {
     let Ok(name) = std::str::from_utf8(name_raw) else {
         return false;
@@ -636,6 +683,7 @@ fn is_zip_noise_entry(name_raw: &[u8]) -> bool {
         .any(|part| part == "__MACOSX" || part.starts_with("._"))
 }
 
+#[cfg(feature = "zip")]
 fn is_pmx_entry_name(entry: &str) -> bool {
     Path::new(entry)
         .extension()
@@ -643,17 +691,19 @@ fn is_pmx_entry_name(entry: &str) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("pmx"))
 }
 
+#[cfg(feature = "zip")]
 fn zip_error_to_io(error: zip::result::ZipError) -> io::Error {
     io::Error::other(error)
 }
 
+#[cfg(feature = "zip")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ZipEntryMatch {
     index: usize,
     entry: String,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "zip"))]
 mod tests {
     use super::{PmxSource, PmxSourceLocation, ZipNameEncoding, normalize_zip_entry_name};
     use encoding_rs::{GBK, SHIFT_JIS};
