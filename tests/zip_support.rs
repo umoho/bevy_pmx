@@ -58,6 +58,10 @@ fn push_u8(bytes: &mut Vec<u8>, value: u8) {
     bytes.push(value);
 }
 
+fn push_u16(bytes: &mut Vec<u8>, value: u16) {
+    bytes.extend_from_slice(&value.to_le_bytes());
+}
+
 fn push_i32(bytes: &mut Vec<u8>, value: i32) {
     bytes.extend_from_slice(&value.to_le_bytes());
 }
@@ -121,6 +125,82 @@ fn push_material(bytes: &mut Vec<u8>, texture_index: i32) {
     push_i32(bytes, 3);
 }
 
+fn push_rigid_body(bytes: &mut Vec<u8>) {
+    push_text(bytes, "rigid");
+    push_text(bytes, "rigid");
+    push_i32(bytes, -1);
+    push_u8(bytes, 1);
+    push_u16(bytes, 0xffff);
+    push_u8(bytes, 0);
+    push_vec3(bytes, [0.5, 0.5, 0.5]);
+    push_vec3(bytes, [0.0, 1.0, 0.0]);
+    push_vec3(bytes, [0.0, 0.0, 0.0]);
+    push_f32(bytes, 1.0);
+    push_f32(bytes, 0.5);
+    push_f32(bytes, 0.5);
+    push_f32(bytes, 0.3);
+    push_f32(bytes, 0.4);
+    push_u8(bytes, 1);
+}
+
+fn push_joint(bytes: &mut Vec<u8>) {
+    push_text(bytes, "joint");
+    push_text(bytes, "joint");
+    push_u8(bytes, 0);
+    push_i32(bytes, 0);
+    push_i32(bytes, 0);
+    push_vec3(bytes, [0.0, 0.0, 0.0]);
+    push_vec3(bytes, [0.0, 0.0, 0.0]);
+    push_vec3(bytes, [-1.0, -1.0, -1.0]);
+    push_vec3(bytes, [1.0, 1.0, 1.0]);
+    push_vec3(bytes, [-0.1, -0.1, -0.1]);
+    push_vec3(bytes, [0.1, 0.1, 0.1]);
+    push_vec3(bytes, [0.0, 0.0, 0.0]);
+    push_vec3(bytes, [0.0, 0.0, 0.0]);
+}
+
+fn push_soft_body_config(bytes: &mut Vec<u8>) {
+    for value in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2] {
+        push_f32(bytes, value);
+    }
+}
+
+fn push_soft_body_cluster(bytes: &mut Vec<u8>) {
+    for value in [1.3, 1.4, 1.5, 1.6, 1.7, 1.8] {
+        push_f32(bytes, value);
+    }
+}
+
+fn push_soft_body(bytes: &mut Vec<u8>) {
+    push_text(bytes, "soft");
+    push_text(bytes, "soft");
+    push_u8(bytes, 0);
+    push_i32(bytes, -1);
+    push_u8(bytes, 1);
+    push_u16(bytes, 0xffff);
+    push_u8(bytes, 0);
+    push_i32(bytes, 1);
+    push_i32(bytes, 2);
+    push_f32(bytes, 1.0);
+    push_f32(bytes, 0.05);
+    push_i32(bytes, 0);
+    push_soft_body_config(bytes);
+    push_soft_body_cluster(bytes);
+    push_i32(bytes, 5);
+    push_i32(bytes, 6);
+    push_i32(bytes, 7);
+    push_i32(bytes, 8);
+    push_f32(bytes, 0.2);
+    push_f32(bytes, 0.3);
+    push_f32(bytes, 0.4);
+    push_i32(bytes, 1);
+    push_i32(bytes, 0);
+    push_i32(bytes, 0);
+    push_u8(bytes, 1);
+    push_i32(bytes, 1);
+    push_i32(bytes, 0);
+}
+
 fn build_minimal_pmx_bytes(texture_paths: &[&str]) -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"PMX ");
@@ -157,6 +237,43 @@ fn build_minimal_pmx_bytes(texture_paths: &[&str]) -> Vec<u8> {
     push_i32(&mut bytes, 0);
     push_i32(&mut bytes, 0);
     push_i32(&mut bytes, 0);
+
+    bytes
+}
+
+fn build_physics_pmx_bytes() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"PMX ");
+    push_f32(&mut bytes, 2.1);
+    push_u8(&mut bytes, 8);
+    push_u8(&mut bytes, 1);
+    push_u8(&mut bytes, 0);
+    bytes.extend_from_slice(&[4, 4, 4, 4, 4, 4]);
+    push_text(&mut bytes, "physics sample");
+    push_text(&mut bytes, "physics sample");
+    push_text(&mut bytes, "");
+    push_text(&mut bytes, "");
+
+    push_i32(&mut bytes, 1);
+    push_vertex(&mut bytes, [0.0, 0.0, 0.0], [0.0, 0.0]);
+
+    push_i32(&mut bytes, 0);
+
+    push_i32(&mut bytes, 0);
+    push_i32(&mut bytes, 0);
+
+    push_i32(&mut bytes, 0);
+    push_i32(&mut bytes, 0);
+    push_i32(&mut bytes, 0);
+
+    push_i32(&mut bytes, 1);
+    push_rigid_body(&mut bytes);
+
+    push_i32(&mut bytes, 1);
+    push_joint(&mut bytes);
+
+    push_i32(&mut bytes, 1);
+    push_soft_body(&mut bytes);
 
     bytes
 }
@@ -276,6 +393,27 @@ fn build_test_app() -> App {
             load_bones: false,
             load_morphs: false,
             load_physics: false,
+            keep_raw_document: true,
+            resolver: Default::default(),
+            zip_name_encoding: ZipNameEncoding::Auto,
+        }),
+    ));
+    app
+}
+
+fn build_physics_test_app() -> App {
+    let mut app = App::new();
+    app.add_plugins((
+        bevy::MinimalPlugins,
+        AssetPlugin::default(),
+        bevy::image::ImagePlugin::default_nearest(),
+        PmxPlugin::with_settings(PmxLoaderSettings {
+            load_textures: false,
+            load_materials: false,
+            load_meshes: false,
+            load_bones: false,
+            load_morphs: false,
+            load_physics: true,
             keep_raw_document: true,
             resolver: Default::default(),
             zip_name_encoding: ZipNameEncoding::Auto,
@@ -509,6 +647,97 @@ fn asset_server_loads_plain_pmx_files_without_regressing_folder_sources() {
         .expect("should load the texture subasset");
 
     assert!(!is_placeholder_texture(image));
+
+    let _ = fs::remove_dir_all(&asset_root);
+}
+
+#[test]
+fn asset_server_preserves_physics_records_when_disabled() {
+    let asset_root = unique_asset_root("bevy_pmx_loader_physics_disabled");
+    let model_path = asset_root.join("model.pmx");
+    let load_path = asset_root
+        .strip_prefix("assets")
+        .expect("asset path should live under assets")
+        .join("model.pmx");
+    let pmx_bytes = build_physics_pmx_bytes();
+
+    write_bytes(&model_path, &pmx_bytes);
+
+    let mut app = build_test_app();
+    let handle = load_pmx_handle(&mut app, load_path.to_string_lossy().into_owned());
+    wait_for_pmx_asset(&mut app, &handle);
+
+    let assets = app.world().resource::<Assets<Pmx>>();
+    let model = assets.get(&handle).expect("should load the PMX asset");
+    let rigid_body_assets = app.world().resource::<Assets<PmxRigidBodyRecord>>();
+    let joint_assets = app.world().resource::<Assets<PmxJointRecord>>();
+    let soft_body_assets = app.world().resource::<Assets<PmxSoftBodyRecord>>();
+
+    assert_eq!(model.rigid_body_records().len(), 1);
+    assert_eq!(model.joint_records().len(), 1);
+    assert_eq!(model.soft_body_records().len(), 1);
+    assert!(model.rigid_body_handles().is_empty());
+    assert!(model.joint_handles().is_empty());
+    assert!(model.soft_body_handles().is_empty());
+    assert!(rigid_body_assets.is_empty());
+    assert!(joint_assets.is_empty());
+    assert!(soft_body_assets.is_empty());
+
+    let _ = fs::remove_dir_all(&asset_root);
+}
+
+#[test]
+fn asset_server_materializes_physics_records_when_enabled() {
+    let asset_root = unique_asset_root("bevy_pmx_loader_physics");
+    let model_path = asset_root.join("model.pmx");
+    let load_path = asset_root
+        .strip_prefix("assets")
+        .expect("asset path should live under assets")
+        .join("model.pmx");
+    let pmx_bytes = build_physics_pmx_bytes();
+
+    write_bytes(&model_path, &pmx_bytes);
+
+    let mut app = build_physics_test_app();
+    let handle = load_pmx_handle(&mut app, load_path.to_string_lossy().into_owned());
+    wait_for_pmx_asset(&mut app, &handle);
+
+    let assets = app.world().resource::<Assets<Pmx>>();
+    let model = assets.get(&handle).expect("should load the PMX asset");
+    let rigid_body_assets = app.world().resource::<Assets<PmxRigidBodyRecord>>();
+    let joint_assets = app.world().resource::<Assets<PmxJointRecord>>();
+    let soft_body_assets = app.world().resource::<Assets<PmxSoftBodyRecord>>();
+
+    assert_eq!(model.rigid_body_records().len(), 1);
+    assert_eq!(model.rigid_body_handles().len(), 1);
+    assert_eq!(model.joint_records().len(), 1);
+    assert_eq!(model.joint_handles().len(), 1);
+    assert_eq!(model.soft_body_records().len(), 1);
+    assert_eq!(model.soft_body_handles().len(), 1);
+    assert_eq!(
+        rigid_body_assets
+            .get(&model.rigid_body_handles()[0])
+            .expect("should load the rigid body subasset")
+            .rigid_body
+            .name,
+        "rigid"
+    );
+    assert_eq!(
+        joint_assets
+            .get(&model.joint_handles()[0])
+            .expect("should load the joint subasset")
+            .joint
+            .name,
+        "joint"
+    );
+    assert_eq!(
+        soft_body_assets
+            .get(&model.soft_body_handles()[0])
+            .expect("should load the soft body subasset")
+            .soft_body
+            .name,
+        "soft"
+    );
 
     let _ = fs::remove_dir_all(&asset_root);
 }

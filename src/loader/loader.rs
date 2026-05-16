@@ -33,8 +33,8 @@ pub struct PmxLoaderSettings {
     pub load_bones: bool,
     /// Materializes PMX morph subassets and stores their handles on `Pmx::morph_handles`.
     pub load_morphs: bool,
-    /// Reserved for later stages. Currently a no-op because physics runtime assets are not built
-    /// yet.
+    /// Materializes PMX physics subassets and stores their handles on the relevant `Pmx`
+    /// handle lists.
     pub load_physics: bool,
     /// Retains the original parsed PMX document in `Pmx::raw_document`.
     pub keep_raw_document: bool,
@@ -193,6 +193,47 @@ impl AssetLoader for PmxLoader {
             }
 
             model = model.with_morph_handles(morph_handles);
+        }
+
+        if self.settings.load_physics {
+            let rigid_body_records = model.rigid_body_records.clone();
+            let mut rigid_body_handles = Vec::with_capacity(rigid_body_records.len());
+
+            for (rigid_body_index, record) in rigid_body_records.iter().enumerate() {
+                let rigid_body_handle = load_context.add_labeled_asset(
+                    PmxAssetLabel::RigidBody(rigid_body_index).to_string(),
+                    record.clone(),
+                );
+                rigid_body_handles.push(rigid_body_handle);
+            }
+
+            model = model.with_rigid_body_handles(rigid_body_handles);
+
+            let joint_records = model.joint_records.clone();
+            let mut joint_handles = Vec::with_capacity(joint_records.len());
+
+            for (joint_index, record) in joint_records.iter().enumerate() {
+                let joint_handle = load_context.add_labeled_asset(
+                    PmxAssetLabel::Joint(joint_index).to_string(),
+                    record.clone(),
+                );
+                joint_handles.push(joint_handle);
+            }
+
+            model = model.with_joint_handles(joint_handles);
+
+            let soft_body_records = model.soft_body_records.clone();
+            let mut soft_body_handles = Vec::with_capacity(soft_body_records.len());
+
+            for (soft_body_index, record) in soft_body_records.iter().enumerate() {
+                let soft_body_handle = load_context.add_labeled_asset(
+                    PmxAssetLabel::SoftBody(soft_body_index).to_string(),
+                    record.clone(),
+                );
+                soft_body_handles.push(soft_body_handle);
+            }
+
+            model = model.with_soft_body_handles(soft_body_handles);
         }
 
         if self.settings.load_meshes {

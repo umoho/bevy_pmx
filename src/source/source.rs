@@ -660,15 +660,18 @@ mod tests {
     use std::{
         fs,
         path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
+        sync::atomic::{AtomicU64, Ordering},
     };
 
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
     fn unique_temp_path(prefix: &str, extension: &str) -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be monotonic")
-            .as_nanos();
-        std::env::temp_dir().join(format!("{prefix}_{unique}{extension}"))
+        let unique = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "{prefix}_{}_{}{extension}",
+            std::process::id(),
+            unique
+        ))
     }
 
     fn write_u16(buf: &mut Vec<u8>, value: u16) {

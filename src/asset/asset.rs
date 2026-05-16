@@ -12,7 +12,8 @@ pub mod morph {
 
 use crate::{
     bone::PmxBoneRecord,
-    format::{PmxBone, PmxDocument, PmxMaterial, PmxMorph},
+    format::{PmxBone, PmxDocument, PmxJoint, PmxMaterial, PmxMorph, PmxRigidBody, PmxSoftBody},
+    physics::{PmxJointRecord, PmxRigidBodyRecord, PmxSoftBodyRecord},
     resolver::PmxResolvedPath,
 };
 
@@ -190,9 +191,10 @@ mod tests {
 /// Root PMX asset produced by the loader.
 ///
 /// `raw_document` is present only when `keep_raw_document` is enabled. `geometry`,
-/// `primitives`, `material_records`, `morph_records`, and `bone_records` are always kept so the
-/// model can be rendered or re-materialized later, and `mesh_handle` / `material_handles` /
-/// `morph_handles` / `bone_handles` are filled when the loader materializes Bevy subassets.
+/// `primitives`, `material_records`, `morph_records`, `bone_records`, and physics records are
+/// always kept so the model can be rendered or re-materialized later, and `mesh_handle` /
+/// `material_handles` / `morph_handles` / `bone_handles` / physics handles are filled when the
+/// loader materializes Bevy subassets.
 #[derive(Debug, Clone, PartialEq, Asset, TypePath)]
 pub struct Pmx {
     pub raw_document: Option<PmxDocument>,
@@ -211,6 +213,18 @@ pub struct Pmx {
     pub bone_records: Vec<PmxBoneRecord>,
     /// PMX bone subasset handles in the same order as `bone_records`.
     pub bone_handles: Vec<Handle<PmxBoneRecord>>,
+    /// Imported PMX rigid body records kept so the loader can materialize subassets.
+    pub rigid_body_records: Vec<PmxRigidBodyRecord>,
+    /// PMX rigid body subasset handles in the same order as `rigid_body_records`.
+    pub rigid_body_handles: Vec<Handle<PmxRigidBodyRecord>>,
+    /// Imported PMX joint records kept so the loader can materialize subassets.
+    pub joint_records: Vec<PmxJointRecord>,
+    /// PMX joint subasset handles in the same order as `joint_records`.
+    pub joint_handles: Vec<Handle<PmxJointRecord>>,
+    /// Imported PMX soft body records kept so the loader can materialize subassets.
+    pub soft_body_records: Vec<PmxSoftBodyRecord>,
+    /// PMX soft body subasset handles in the same order as `soft_body_records`.
+    pub soft_body_handles: Vec<Handle<PmxSoftBodyRecord>>,
     pub mesh_handle: Option<Handle<Mesh>>,
     pub primitives: Vec<PmxPrimitive>,
 }
@@ -228,6 +242,12 @@ impl Default for Pmx {
             morph_handles: Vec::new(),
             bone_records: Vec::new(),
             bone_handles: Vec::new(),
+            rigid_body_records: Vec::new(),
+            rigid_body_handles: Vec::new(),
+            joint_records: Vec::new(),
+            joint_handles: Vec::new(),
+            soft_body_records: Vec::new(),
+            soft_body_handles: Vec::new(),
             mesh_handle: None,
             primitives: Vec::new(),
         }
@@ -251,6 +271,12 @@ impl Pmx {
             morph_handles: Vec::new(),
             bone_records: Vec::new(),
             bone_handles: Vec::new(),
+            rigid_body_records: Vec::new(),
+            rigid_body_handles: Vec::new(),
+            joint_records: Vec::new(),
+            joint_handles: Vec::new(),
+            soft_body_records: Vec::new(),
+            soft_body_handles: Vec::new(),
             mesh_handle: None,
             primitives,
         }
@@ -291,6 +317,42 @@ impl Pmx {
 
     pub fn with_bone_handles(mut self, bone_handles: Vec<Handle<PmxBoneRecord>>) -> Self {
         self.bone_handles = bone_handles;
+        self
+    }
+
+    pub fn with_rigid_body_records(mut self, rigid_body_records: Vec<PmxRigidBodyRecord>) -> Self {
+        self.rigid_body_records = rigid_body_records;
+        self
+    }
+
+    pub fn with_rigid_body_handles(
+        mut self,
+        rigid_body_handles: Vec<Handle<PmxRigidBodyRecord>>,
+    ) -> Self {
+        self.rigid_body_handles = rigid_body_handles;
+        self
+    }
+
+    pub fn with_joint_records(mut self, joint_records: Vec<PmxJointRecord>) -> Self {
+        self.joint_records = joint_records;
+        self
+    }
+
+    pub fn with_joint_handles(mut self, joint_handles: Vec<Handle<PmxJointRecord>>) -> Self {
+        self.joint_handles = joint_handles;
+        self
+    }
+
+    pub fn with_soft_body_records(mut self, soft_body_records: Vec<PmxSoftBodyRecord>) -> Self {
+        self.soft_body_records = soft_body_records;
+        self
+    }
+
+    pub fn with_soft_body_handles(
+        mut self,
+        soft_body_handles: Vec<Handle<PmxSoftBodyRecord>>,
+    ) -> Self {
+        self.soft_body_handles = soft_body_handles;
         self
     }
 
@@ -348,6 +410,30 @@ impl Pmx {
         &self.bone_handles
     }
 
+    pub fn rigid_body_records(&self) -> &[PmxRigidBodyRecord] {
+        &self.rigid_body_records
+    }
+
+    pub fn rigid_body_handles(&self) -> &[Handle<PmxRigidBodyRecord>] {
+        &self.rigid_body_handles
+    }
+
+    pub fn joint_records(&self) -> &[PmxJointRecord] {
+        &self.joint_records
+    }
+
+    pub fn joint_handles(&self) -> &[Handle<PmxJointRecord>] {
+        &self.joint_handles
+    }
+
+    pub fn soft_body_records(&self) -> &[PmxSoftBodyRecord] {
+        &self.soft_body_records
+    }
+
+    pub fn soft_body_handles(&self) -> &[Handle<PmxSoftBodyRecord>] {
+        &self.soft_body_handles
+    }
+
     pub fn mesh_handle(&self) -> Option<&Handle<Mesh>> {
         self.mesh_handle.as_ref()
     }
@@ -372,6 +458,27 @@ impl Pmx {
         self.raw_document
             .as_ref()
             .map_or(&[], |document| document.bones.as_slice())
+    }
+
+    /// Raw rigid body definitions from `raw_document`, if the raw document is still retained.
+    pub fn rigid_bodies(&self) -> &[PmxRigidBody] {
+        self.raw_document
+            .as_ref()
+            .map_or(&[], |document| document.rigid_bodies.as_slice())
+    }
+
+    /// Raw joint definitions from `raw_document`, if the raw document is still retained.
+    pub fn joints(&self) -> &[PmxJoint] {
+        self.raw_document
+            .as_ref()
+            .map_or(&[], |document| document.joints.as_slice())
+    }
+
+    /// Raw soft body definitions from `raw_document`, if the raw document is still retained.
+    pub fn soft_bodies(&self) -> &[PmxSoftBody] {
+        self.raw_document
+            .as_ref()
+            .map_or(&[], |document| document.soft_bodies.as_slice())
     }
 }
 

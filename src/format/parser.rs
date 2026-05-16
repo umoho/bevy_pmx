@@ -41,7 +41,11 @@ impl<'a, R: Read + ?Sized> PmxParser<'a, R> {
         let display_frames = self.read_display_frames(&header)?;
         let rigid_bodies = self.read_rigid_bodies(&header)?;
         let joints = self.read_joints(&header)?;
-        let soft_bodies = Vec::new();
+        let soft_bodies = if header.version == 2.1 {
+            self.read_soft_bodies(&header)?
+        } else {
+            Vec::new()
+        };
 
         Ok(PmxDocument {
             header,
@@ -630,6 +634,154 @@ impl<'a, R: Read + ?Sized> PmxParser<'a, R> {
         })
     }
 
+    fn read_soft_bodies(&mut self, header: &PmxHeader) -> PmxResult<Vec<PmxSoftBody>> {
+        let count = self.read_len()?;
+        let mut soft_bodies = Vec::with_capacity(count);
+        for _ in 0..count {
+            soft_bodies.push(self.read_soft_body(header)?);
+        }
+        Ok(soft_bodies)
+    }
+
+    fn read_soft_body(&mut self, header: &PmxHeader) -> PmxResult<PmxSoftBody> {
+        let name = self.read_text(header.encoding)?;
+        let name_english = self.read_text(header.encoding)?;
+        let shape = match self.read_u8()? {
+            0 => PmxSoftBodyShape::TriMesh,
+            1 => PmxSoftBodyShape::Rope,
+            _ => return Err(PmxError::InvalidFormat("unsupported PMX soft body shape")),
+        };
+        let material_index = self.read_index(header.material_index_size)?;
+        let group = self.read_u8()?;
+        let mask = self.read_u16()?;
+        let flags = match self.read_u8()? {
+            0 => PmxSoftBodyFlags::BLink,
+            1 => PmxSoftBodyFlags::Cluster,
+            2 => PmxSoftBodyFlags::LinkCross,
+            _ => return Err(PmxError::InvalidFormat("unsupported PMX soft body flags")),
+        };
+        let b_link_distance = self.read_i32()?;
+        let num_clusters = self.read_i32()?;
+        let total_mass = self.read_f32()?;
+        let collision_margin = self.read_f32()?;
+        let aero_model = match self.read_i32()? {
+            0 => PmxSoftBodyAeroModel::VertexPoint,
+            1 => PmxSoftBodyAeroModel::VertexTwoSided,
+            2 => PmxSoftBodyAeroModel::VertexOneSided,
+            3 => PmxSoftBodyAeroModel::FaceTwoSided,
+            4 => PmxSoftBodyAeroModel::FaceOneSided,
+            _ => {
+                return Err(PmxError::InvalidFormat(
+                    "unsupported PMX soft body aero model",
+                ));
+            }
+        };
+        let config = self.read_soft_body_config()?;
+        let cluster = self.read_soft_body_cluster()?;
+        let iteration = self.read_soft_body_iteration()?;
+        let material = self.read_soft_body_material()?;
+        let anchor_rigid_bodies = self.read_soft_body_anchor_rigid_bodies(header)?;
+        let pin_vertices = self.read_soft_body_pin_vertices(header)?;
+
+        Ok(PmxSoftBody {
+            name,
+            name_english,
+            shape,
+            material_index,
+            group,
+            mask,
+            flags,
+            b_link_distance,
+            num_clusters,
+            total_mass,
+            collision_margin,
+            aero_model,
+            config,
+            cluster,
+            iteration,
+            material,
+            anchor_rigid_bodies,
+            pin_vertices,
+        })
+    }
+
+    fn read_soft_body_config(&mut self) -> PmxResult<PmxSoftBodyConfig> {
+        Ok(PmxSoftBodyConfig {
+            vcf: self.read_f32()?,
+            dp: self.read_f32()?,
+            dg: self.read_f32()?,
+            lf: self.read_f32()?,
+            pr: self.read_f32()?,
+            vc: self.read_f32()?,
+            df: self.read_f32()?,
+            mt: self.read_f32()?,
+            chr: self.read_f32()?,
+            khr: self.read_f32()?,
+            shr: self.read_f32()?,
+            ahr: self.read_f32()?,
+        })
+    }
+
+    fn read_soft_body_cluster(&mut self) -> PmxResult<PmxSoftBodyCluster> {
+        Ok(PmxSoftBodyCluster {
+            srhr_cl: self.read_f32()?,
+            skhr_cl: self.read_f32()?,
+            sshr_cl: self.read_f32()?,
+            sr_splt_cl: self.read_f32()?,
+            sk_splt_cl: self.read_f32()?,
+            ss_splt_cl: self.read_f32()?,
+        })
+    }
+
+    fn read_soft_body_iteration(&mut self) -> PmxResult<PmxSoftBodyIteration> {
+        Ok(PmxSoftBodyIteration {
+            v_it: self.read_i32()?,
+            p_it: self.read_i32()?,
+            d_it: self.read_i32()?,
+            c_it: self.read_i32()?,
+        })
+    }
+
+    fn read_soft_body_material(&mut self) -> PmxResult<PmxSoftBodyMaterial> {
+        Ok(PmxSoftBodyMaterial {
+            lst: self.read_f32()?,
+            ast: self.read_f32()?,
+            vst: self.read_f32()?,
+        })
+    }
+
+    fn read_soft_body_anchor_rigid_bodies(
+        &mut self,
+        header: &PmxHeader,
+    ) -> PmxResult<Vec<PmxSoftBodyAnchorRigidBody>> {
+        let count = self.read_len()?;
+        let mut anchors = Vec::with_capacity(count);
+        for _ in 0..count {
+            anchors.push(self.read_soft_body_anchor_rigid_body(header)?);
+        }
+        Ok(anchors)
+    }
+
+    fn read_soft_body_anchor_rigid_body(
+        &mut self,
+        header: &PmxHeader,
+    ) -> PmxResult<PmxSoftBodyAnchorRigidBody> {
+        Ok(PmxSoftBodyAnchorRigidBody {
+            rigid_body_index: self.read_index(header.rigid_body_index_size)?,
+            vertex_index: self.read_vertex_index(header.vertex_index_size)?,
+            near_mode: self.read_u8()? != 0,
+        })
+    }
+
+    fn read_soft_body_pin_vertices(&mut self, header: &PmxHeader) -> PmxResult<Vec<u32>> {
+        let count = self.read_len()?;
+        let mut pin_vertices = Vec::with_capacity(count);
+        for _ in 0..count {
+            pin_vertices.push(self.read_vertex_index(header.vertex_index_size)?);
+        }
+        Ok(pin_vertices)
+    }
+
     fn read_text(&mut self, encoding: PmxTextEncoding) -> PmxResult<String> {
         let len = self.read_len()?;
         let bytes = self.read_bytes(len)?;
@@ -762,13 +914,35 @@ impl<'a, R: Read + ?Sized> PmxParser<'a, R> {
 #[cfg(test)]
 mod tests {
     use super::parse_pmx;
+    use crate::format::{
+        PmxSoftBody, PmxSoftBodyAeroModel, PmxSoftBodyAnchorRigidBody, PmxSoftBodyCluster,
+        PmxSoftBodyConfig, PmxSoftBodyFlags, PmxSoftBodyIteration, PmxSoftBodyMaterial,
+        PmxSoftBodyShape,
+    };
 
     fn push_f32(bytes: &mut Vec<u8>, value: f32) {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
 
+    fn push_u8(bytes: &mut Vec<u8>, value: u8) {
+        bytes.push(value);
+    }
+
+    fn push_u16(bytes: &mut Vec<u8>, value: u16) {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
     fn push_i32(bytes: &mut Vec<u8>, value: i32) {
         bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn push_u32(bytes: &mut Vec<u8>, value: u32) {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn push_text(bytes: &mut Vec<u8>, value: &str) {
+        push_i32(bytes, value.len() as i32);
+        bytes.extend_from_slice(value.as_bytes());
     }
 
     #[test]
@@ -781,10 +955,10 @@ mod tests {
         bytes.push(0);
         bytes.extend_from_slice(&[4, 4, 4, 4, 4, 4]);
 
-        for _ in 0..4 {
-            push_i32(&mut bytes, 0);
-        }
-
+        push_text(&mut bytes, "");
+        push_text(&mut bytes, "");
+        push_text(&mut bytes, "");
+        push_text(&mut bytes, "");
         for _ in 0..9 {
             push_i32(&mut bytes, 0);
         }
@@ -803,5 +977,128 @@ mod tests {
         assert!(document.rigid_bodies.is_empty());
         assert!(document.joints.is_empty());
         assert!(document.soft_bodies.is_empty());
+    }
+
+    #[test]
+    fn parses_pmx_21_soft_body_payload() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"PMX ");
+        push_f32(&mut bytes, 2.1);
+        bytes.push(8);
+        bytes.push(1);
+        bytes.push(0);
+        bytes.extend_from_slice(&[4, 4, 4, 4, 4, 4]);
+
+        push_text(&mut bytes, "");
+        push_text(&mut bytes, "");
+        push_text(&mut bytes, "");
+        push_text(&mut bytes, "");
+
+        for _ in 0..9 {
+            push_i32(&mut bytes, 0);
+        }
+
+        push_i32(&mut bytes, 1);
+        push_text(&mut bytes, "soft");
+        push_text(&mut bytes, "soft_en");
+        push_u8(&mut bytes, 0);
+        push_i32(&mut bytes, -1);
+        push_u8(&mut bytes, 7);
+        push_u16(&mut bytes, 0x2468);
+        push_u8(&mut bytes, 2);
+        push_i32(&mut bytes, 9);
+        push_i32(&mut bytes, 2);
+        push_f32(&mut bytes, 2.25);
+        push_f32(&mut bytes, 0.0625);
+        push_i32(&mut bytes, 3);
+        for value in [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0] {
+            push_f32(&mut bytes, value);
+        }
+        for value in [0.125, 0.25, 0.375, 0.5, 0.625, 0.75] {
+            push_f32(&mut bytes, value);
+        }
+        push_i32(&mut bytes, 1);
+        push_i32(&mut bytes, 2);
+        push_i32(&mut bytes, 3);
+        push_i32(&mut bytes, 4);
+        push_f32(&mut bytes, 1.25);
+        push_f32(&mut bytes, 1.5);
+        push_f32(&mut bytes, 1.75);
+        push_i32(&mut bytes, 2);
+        push_i32(&mut bytes, -1);
+        push_u32(&mut bytes, 0);
+        push_u8(&mut bytes, 1);
+        push_i32(&mut bytes, 0);
+        push_u32(&mut bytes, 7);
+        push_u8(&mut bytes, 0);
+        push_i32(&mut bytes, 2);
+        push_u32(&mut bytes, 8);
+        push_u32(&mut bytes, 9);
+
+        let document = parse_pmx(&bytes).expect("PMX 2.1 soft body should parse");
+        assert_eq!(document.header.version, 2.1);
+        assert_eq!(
+            document.soft_bodies,
+            vec![PmxSoftBody {
+                name: "soft".to_owned(),
+                name_english: "soft_en".to_owned(),
+                shape: PmxSoftBodyShape::TriMesh,
+                material_index: -1,
+                group: 7,
+                mask: 0x2468,
+                flags: PmxSoftBodyFlags::LinkCross,
+                b_link_distance: 9,
+                num_clusters: 2,
+                total_mass: 2.25,
+                collision_margin: 0.0625,
+                aero_model: PmxSoftBodyAeroModel::FaceTwoSided,
+                config: PmxSoftBodyConfig {
+                    vcf: 0.5,
+                    dp: 1.0,
+                    dg: 1.5,
+                    lf: 2.0,
+                    pr: 2.5,
+                    vc: 3.0,
+                    df: 3.5,
+                    mt: 4.0,
+                    chr: 4.5,
+                    khr: 5.0,
+                    shr: 5.5,
+                    ahr: 6.0,
+                },
+                cluster: PmxSoftBodyCluster {
+                    srhr_cl: 0.125,
+                    skhr_cl: 0.25,
+                    sshr_cl: 0.375,
+                    sr_splt_cl: 0.5,
+                    sk_splt_cl: 0.625,
+                    ss_splt_cl: 0.75,
+                },
+                iteration: PmxSoftBodyIteration {
+                    v_it: 1,
+                    p_it: 2,
+                    d_it: 3,
+                    c_it: 4,
+                },
+                material: PmxSoftBodyMaterial {
+                    lst: 1.25,
+                    ast: 1.5,
+                    vst: 1.75,
+                },
+                anchor_rigid_bodies: vec![
+                    PmxSoftBodyAnchorRigidBody {
+                        rigid_body_index: -1,
+                        vertex_index: 0,
+                        near_mode: true,
+                    },
+                    PmxSoftBodyAnchorRigidBody {
+                        rigid_body_index: 0,
+                        vertex_index: 7,
+                        near_mode: false,
+                    },
+                ],
+                pin_vertices: vec![8, 9],
+            }]
+        );
     }
 }

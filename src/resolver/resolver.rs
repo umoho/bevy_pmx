@@ -188,16 +188,19 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
-        time::{SystemTime, UNIX_EPOCH},
+        sync::atomic::{AtomicU64, Ordering},
     };
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn resolves_bare_texture_names_from_common_mmd_directories_case_insensitively() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be monotonic")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("bevy_pmx_resolver_{unique}"));
+        let unique = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "bevy_pmx_resolver_{}_{}",
+            std::process::id(),
+            unique
+        ));
         let model_root = root.join("Model");
         let texture_root = model_root.join("Texture");
         fs::create_dir_all(&texture_root).expect("should create texture directory");
@@ -217,11 +220,12 @@ mod tests {
 
     #[test]
     fn computes_texture_path_relative_to_the_source_root() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be monotonic")
-            .as_nanos();
-        let source_root = std::env::temp_dir().join(format!("bevy_pmx_resolver_root_{unique}"));
+        let unique = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let source_root = std::env::temp_dir().join(format!(
+            "bevy_pmx_resolver_root_{}_{}",
+            std::process::id(),
+            unique
+        ));
         let resolved =
             PmxResolvedPath::new("face.png", source_root.join("Texture").join("Face.PNG"));
 

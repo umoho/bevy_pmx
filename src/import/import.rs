@@ -2,7 +2,8 @@ use crate::{
     PmxMorphRecord,
     asset::{Pmx, PmxMaterialRecord, PmxMeshGeometry, PmxPrimitive},
     bone::PmxBoneRecord,
-    format::{PmxDocument, PmxMaterial},
+    format::{PmxDocument, PmxJoint, PmxMaterial, PmxRigidBody, PmxSoftBody},
+    physics::{PmxJointRecord, PmxRigidBodyRecord, PmxSoftBodyRecord},
     resolver::{PmxResolvedPath, PmxResolver, PmxResolverSettings},
     source::PmxSource,
 };
@@ -50,13 +51,19 @@ pub fn import_pmx(document: PmxDocument, context: &PmxImportContext) -> PmxImpor
     let material_records = build_material_records(&document.materials);
     let morph_records = PmxMorphRecord::from_document(&document.morphs);
     let bone_records = PmxBoneRecord::from_document(&document.bones);
+    let rigid_body_records = build_rigid_body_records(&document.rigid_bodies);
+    let joint_records = build_joint_records(&document.joints);
+    let soft_body_records = build_soft_body_records(&document.soft_bodies);
     let raw_document = context.keep_raw_document.then(|| document.clone());
 
     let model = Pmx::new(raw_document, geometry, primitives)
         .with_texture_paths(resolved_textures)
         .with_material_records(material_records)
         .with_morph_records(morph_records)
-        .with_bone_records(bone_records);
+        .with_bone_records(bone_records)
+        .with_rigid_body_records(rigid_body_records)
+        .with_joint_records(joint_records)
+        .with_soft_body_records(soft_body_records);
 
     PmxImportResult { model }
 }
@@ -98,24 +105,38 @@ fn build_material_records(materials: &[PmxMaterial]) -> Vec<PmxMaterialRecord> {
         .collect()
 }
 
+fn build_rigid_body_records(rigid_bodies: &[PmxRigidBody]) -> Vec<PmxRigidBodyRecord> {
+    PmxRigidBodyRecord::from_document(rigid_bodies)
+}
+
+fn build_joint_records(joints: &[PmxJoint]) -> Vec<PmxJointRecord> {
+    PmxJointRecord::from_document(joints)
+}
+
+fn build_soft_body_records(soft_bodies: &[PmxSoftBody]) -> Vec<PmxSoftBodyRecord> {
+    PmxSoftBodyRecord::from_document(soft_bodies)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{PmxImportContext, PmxMeshGeometry, import_pmx};
     use crate::{
         format::{
-            PmxBone, PmxBoneFlags, PmxBoneTail, PmxDocument, PmxHeader, PmxMaterial,
-            PmxMaterialFlags, PmxSphereMode, PmxTexture, PmxVertex, PmxVertexWeight,
+            PmxBone, PmxBoneFlags, PmxBoneTail, PmxDocument, PmxHeader, PmxJoint, PmxJointKind,
+            PmxMaterial, PmxMaterialFlags, PmxRigidBody, PmxRigidBodyMode, PmxRigidBodyShape,
+            PmxSoftBody, PmxSoftBodyAeroModel, PmxSoftBodyAnchorRigidBody, PmxSoftBodyCluster,
+            PmxSoftBodyConfig, PmxSoftBodyFlags, PmxSoftBodyIteration, PmxSoftBodyMaterial,
+            PmxSoftBodyShape, PmxSphereMode, PmxTexture, PmxVertex, PmxVertexWeight,
         },
         source::PmxSource,
     };
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
     fn unique_temp_path(prefix: &str) -> std::path::PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be monotonic")
-            .as_nanos();
-        std::env::temp_dir().join(format!("{prefix}_{unique}"))
+        let unique = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("{prefix}_{}_{}", std::process::id(), unique))
     }
 
     fn sample_document() -> PmxDocument {
@@ -201,9 +222,91 @@ mod tests {
             ],
             morphs: Vec::new(),
             display_frames: Vec::new(),
-            rigid_bodies: Vec::new(),
-            joints: Vec::new(),
-            soft_bodies: Vec::new(),
+            rigid_bodies: vec![PmxRigidBody {
+                name: "rigid".to_owned(),
+                name_english: "rigid".to_owned(),
+                bone_index: 0,
+                group: 1,
+                mask: 0xffff,
+                shape: PmxRigidBodyShape::Sphere,
+                size: [0.5, 0.5, 0.5],
+                position: [0.0, 1.0, 0.0],
+                rotation: [0.0, 0.0, 0.0],
+                mass: 1.0,
+                linear_damping: 0.5,
+                angular_damping: 0.5,
+                restitution: 0.3,
+                friction: 0.4,
+                mode: PmxRigidBodyMode::Physics,
+            }],
+            joints: vec![PmxJoint {
+                name: "joint".to_owned(),
+                name_english: "joint".to_owned(),
+                joint_type: PmxJointKind::Spring6Dof,
+                body_a: 0,
+                body_b: 0,
+                position: [0.0, 0.0, 0.0],
+                rotation: [0.0, 0.0, 0.0],
+                translation_limit_min: [-1.0, -1.0, -1.0],
+                translation_limit_max: [1.0, 1.0, 1.0],
+                rotation_limit_min: [-0.1, -0.1, -0.1],
+                rotation_limit_max: [0.1, 0.1, 0.1],
+                spring_translation: [0.0, 0.0, 0.0],
+                spring_rotation: [0.0, 0.0, 0.0],
+            }],
+            soft_bodies: vec![PmxSoftBody {
+                name: "soft".to_owned(),
+                name_english: "soft".to_owned(),
+                shape: PmxSoftBodyShape::Rope,
+                material_index: 0,
+                group: 1,
+                mask: 0xffff,
+                flags: PmxSoftBodyFlags::BLink,
+                b_link_distance: 1,
+                num_clusters: 2,
+                total_mass: 1.0,
+                collision_margin: 0.05,
+                aero_model: PmxSoftBodyAeroModel::VertexPoint,
+                config: PmxSoftBodyConfig {
+                    vcf: 0.1,
+                    dp: 0.2,
+                    dg: 0.3,
+                    lf: 0.4,
+                    pr: 0.5,
+                    vc: 0.6,
+                    df: 0.7,
+                    mt: 0.8,
+                    chr: 0.9,
+                    khr: 1.0,
+                    shr: 1.1,
+                    ahr: 1.2,
+                },
+                cluster: PmxSoftBodyCluster {
+                    srhr_cl: 1.3,
+                    skhr_cl: 1.4,
+                    sshr_cl: 1.5,
+                    sr_splt_cl: 1.6,
+                    sk_splt_cl: 1.7,
+                    ss_splt_cl: 1.8,
+                },
+                iteration: PmxSoftBodyIteration {
+                    v_it: 5,
+                    p_it: 6,
+                    d_it: 7,
+                    c_it: 8,
+                },
+                material: PmxSoftBodyMaterial {
+                    lst: 0.2,
+                    ast: 0.3,
+                    vst: 0.4,
+                },
+                anchor_rigid_bodies: vec![PmxSoftBodyAnchorRigidBody {
+                    rigid_body_index: 0,
+                    vertex_index: 1,
+                    near_mode: true,
+                }],
+                pin_vertices: vec![2],
+            }],
         }
     }
 
@@ -249,6 +352,20 @@ mod tests {
         assert_eq!(kept.model.bone_records()[0].children, vec![1]);
         assert_eq!(kept.model.bone_records()[1].parent_index, Some(0));
         assert_eq!(kept.model.root_bones().count(), 1);
+        assert_eq!(kept.model.rigid_body_records().len(), 1);
+        assert_eq!(kept.model.rigid_body_records()[0].rigid_body.name, "rigid");
+        assert_eq!(kept.model.joint_records().len(), 1);
+        assert_eq!(kept.model.joint_records()[0].joint.name, "joint");
+        assert_eq!(kept.model.soft_body_records().len(), 1);
+        assert_eq!(kept.model.soft_body_records()[0].soft_body.name, "soft");
+        assert_eq!(
+            kept.model.soft_body_records()[0].soft_body.shape,
+            PmxSoftBodyShape::Rope
+        );
+        assert_eq!(
+            kept.model.soft_body_records()[0].soft_body.material_index,
+            0
+        );
 
         let dropped = import_pmx(document, &drop_context);
         assert!(dropped.model.raw_document().is_none());
@@ -257,6 +374,9 @@ mod tests {
         assert_eq!(dropped.model.bone_records().len(), 2);
         assert_eq!(dropped.model.bone_records()[0].children, vec![1]);
         assert_eq!(dropped.model.root_bones().count(), 1);
+        assert_eq!(dropped.model.rigid_body_records().len(), 1);
+        assert_eq!(dropped.model.joint_records().len(), 1);
+        assert_eq!(dropped.model.soft_body_records().len(), 1);
     }
 
     #[test]

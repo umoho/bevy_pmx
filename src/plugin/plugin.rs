@@ -7,6 +7,7 @@ use crate::{
     asset::{Pmx, PmxMaterialAsset},
     bone::PmxBoneRecord,
     loader::{PmxLoader, PmxLoaderSettings},
+    physics::{PmxJointRecord, PmxRigidBodyRecord, PmxSoftBodyRecord},
 };
 
 #[derive(Debug, Clone)]
@@ -37,6 +38,9 @@ impl Plugin for PmxPlugin {
         app.init_asset::<Pmx>();
         app.init_asset::<PmxMaterialAsset>();
         app.init_asset::<PmxBoneRecord>();
+        app.init_asset::<PmxRigidBodyRecord>();
+        app.init_asset::<PmxJointRecord>();
+        app.init_asset::<PmxSoftBodyRecord>();
         app.insert_resource(self.settings.clone());
         app.init_asset_loader::<PmxLoader>();
     }

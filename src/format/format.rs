@@ -415,10 +415,86 @@ pub struct PmxSoftBody {
     pub material_index: i32,
     pub group: u8,
     pub mask: u16,
+    pub flags: PmxSoftBodyFlags,
+    pub b_link_distance: i32,
+    pub num_clusters: i32,
+    pub total_mass: f32,
+    pub collision_margin: f32,
+    pub aero_model: PmxSoftBodyAeroModel,
+    pub config: PmxSoftBodyConfig,
+    pub cluster: PmxSoftBodyCluster,
+    pub iteration: PmxSoftBodyIteration,
+    pub material: PmxSoftBodyMaterial,
+    pub anchor_rigid_bodies: Vec<PmxSoftBodyAnchorRigidBody>,
+    pub pin_vertices: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PmxSoftBodyShape {
     TriMesh,
     Rope,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PmxSoftBodyFlags {
+    BLink,
+    Cluster,
+    LinkCross,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PmxSoftBodyAeroModel {
+    VertexPoint,
+    VertexTwoSided,
+    VertexOneSided,
+    FaceTwoSided,
+    FaceOneSided,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PmxSoftBodyConfig {
+    pub vcf: f32,
+    pub dp: f32,
+    pub dg: f32,
+    pub lf: f32,
+    pub pr: f32,
+    pub vc: f32,
+    pub df: f32,
+    pub mt: f32,
+    pub chr: f32,
+    pub khr: f32,
+    pub shr: f32,
+    pub ahr: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PmxSoftBodyCluster {
+    pub srhr_cl: f32,
+    pub skhr_cl: f32,
+    pub sshr_cl: f32,
+    pub sr_splt_cl: f32,
+    pub sk_splt_cl: f32,
+    pub ss_splt_cl: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PmxSoftBodyIteration {
+    pub v_it: i32,
+    pub p_it: i32,
+    pub d_it: i32,
+    pub c_it: i32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PmxSoftBodyMaterial {
+    pub lst: f32,
+    pub ast: f32,
+    pub vst: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PmxSoftBodyAnchorRigidBody {
+    pub rigid_body_index: i32,
+    pub vertex_index: u32,
+    pub near_mode: bool,
 }
