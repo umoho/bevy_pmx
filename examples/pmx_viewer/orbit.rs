@@ -2,6 +2,7 @@ use std::f32::consts::FRAC_PI_2;
 
 use bevy::{
     camera::Projection,
+    core_pipeline::tonemapping::Tonemapping,
     input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll},
     prelude::*,
     transform::TransformSystems,
@@ -106,6 +107,7 @@ pub(crate) fn spawn_orbit_camera(commands: &mut Commands, scene: &LoadedScene) {
     commands.spawn((
         Name::new("Orbit Camera"),
         Camera3d::default(),
+        Tonemapping::None,
         transform,
         orbit,
     ));
