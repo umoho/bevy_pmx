@@ -97,4 +97,5 @@ cargo run --features zip --example pmx_viewer -- path/to/model.zip
 
 | bevy | bevy_pmx |
 |------|----------|
+| 0.19 | 0.2      |
 | 0.18 | 0.1      |

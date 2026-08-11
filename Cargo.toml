@@ -1,6 +1,6 @@
 [package]
 name = "bevy_pmx"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [features]
@@ -8,10 +8,10 @@ default = []
 zip = ["dep:encoding_rs", "dep:zip"]
 
 [dependencies]
-bevy = { version = "0.18.1", default-features = false, features = ["bevy_asset", "bevy_image", "bevy_log", "bevy_mesh", "bevy_render", "bmp", "jpeg", "png", "std", "tga"] }
+bevy = { version = "0.19.0", default-features = false, features = ["bevy_asset", "bevy_image", "bevy_log", "bevy_mesh", "bevy_render", "bmp", "jpeg", "png", "std", "tga"] }
 encoding_rs = { version = "0.8.35", optional = true }
 zip = { version = "9.0.0-pre2", default-features = false, features = ["deflate-flate2"], optional = true }
 
 [dev-dependencies]
-bevy = { version = "0.18.1", default-features = false, features = ["bevy_gizmos_render", "bevy_pbr", "bevy_post_process", "bevy_ui_render", "bevy_winit", "default_font", "keyboard", "mouse", "wayland", "x11"] }
+bevy = { version = "0.19.0", default-features = false, features = ["bevy_gizmos_render", "bevy_pbr", "bevy_post_process", "bevy_ui_render", "bevy_winit", "default_font", "keyboard", "mouse", "wayland", "x11"] }
 clap = { version = "4.6.1", features = ["derive"] }

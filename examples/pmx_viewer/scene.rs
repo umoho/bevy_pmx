@@ -345,7 +345,7 @@ fn spawn_scene_entities(
     commands.spawn((
         Name::new("Directional Light"),
         DirectionalLight {
-            shadows_enabled: true,
+            shadow_maps_enabled: true,
             illuminance: 20_000.0,
             ..default()
         },
